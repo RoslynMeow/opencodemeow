@@ -1,0 +1,38 @@
+appId: ai.opencode.meowstudio
+productName: OpenCode MeowStudio
+copyright: Copyright © 2026
+directories:
+  buildResources: build
+  output: release
+files:
+  - out/**/*
+  - package.json
+  - "!**/*.map"
+asarUnpack:
+  - resources/**
+extraMetadata:
+  main: out/main/index.js
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+        - arm64
+  artifactName: ${productName}-${version}-${arch}.${ext}
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+mac:
+  target:
+    - dmg
+  category: public.app-category.developer-tools
+  artifactName: ${productName}-${version}-${arch}.${ext}
+linux:
+  target:
+    - AppImage
+    - deb
+  category: Development
+  artifactName: ${productName}-${version}-${arch}.${ext}
