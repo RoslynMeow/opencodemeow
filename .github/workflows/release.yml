@@ -60,6 +60,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/download-artifact@v4
         with:
           path: release-assets
@@ -72,6 +74,10 @@ jobs:
           TAG="v$VERSION"
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" release-assets/* --clobber
+          elif git rev-parse "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" release-assets/* \
+              --title "OpenCode MeowStudio $TAG" \
+              --notes "Automated release built from main ($GITHUB_SHA)."
           else
             gh release create "$TAG" release-assets/* \
               --target "$GITHUB_SHA" \
