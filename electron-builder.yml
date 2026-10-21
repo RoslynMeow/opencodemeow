@@ -17,7 +17,6 @@ win:
     - target: nsis
       arch:
         - x64
-        - arm64
   artifactName: ${productName}-${version}-${arch}.${ext}
 nsis:
   oneClick: false

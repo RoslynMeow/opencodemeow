@@ -202,16 +202,18 @@ release/win-unpacked/OpenCode MeowStudio.exe
 3. 准备发布时，在 `dev` 上更新 `package.json` 的 `version` 并提交
 4. 创建 `dev → main` 的 Pull Request
 5. 合并到 `main` 后，Release workflow 会：
-   - 在 Windows / macOS / Linux 上分别打包
-   - 上传所有安装包
+   - 在 Windows 上打包 NSIS 安装包（当前仅 Windows x64）
+   - 上传安装包
    - 创建或更新 `vX.Y.Z` 的 GitHub Release
 
 工作流文件：
 
 ```text
 .github/workflows/ci.yml       # dev push / PR 校验
-.github/workflows/release.yml  # main push 打包全部平台并发布
+.github/workflows/release.yml  # main push 打包 Windows 并发布
 ```
+
+> 当前 CI 只构建 Windows x64。如需 macOS / Linux 或 arm64，可以在 `release.yml` 中加回对应 runner 和 electron-builder 参数。
 
 建议在 GitHub 上为 `main` 开启分支保护：
 
