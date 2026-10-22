@@ -1,6 +1,7 @@
 import type { OpencodeClient } from "@opencode-ai/sdk"
 import { app, dialog, shell } from "electron"
-import { existsSync, mkdirSync, statSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 import type {
   Agent,
@@ -9,7 +10,9 @@ import type {
   Command,
   CommandInput,
   ConfigScope,
+  FileContentInfo,
   FileDiff,
+  FileNodeInfo,
   LspConfig,
   LspEntry,
   LspViewData,
@@ -75,6 +78,28 @@ type Handler = (...args: never[]) => unknown
 function asRecord(value: unknown): Record<string, unknown> {
   if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>
   return {}
+}
+
+function readGitFileDiff(projectPath: string, file: string): { before: string; after: string } {
+  const normalized = file.replace(/\\/g, "/")
+  let before = ""
+  try {
+    before = execFileSync("git", ["-C", projectPath, "show", `HEAD:${normalized}`], {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+    })
+  } catch {
+    before = ""
+  }
+  let after = ""
+  try {
+    const absolute = resolve(projectPath, file)
+    if (existsSync(absolute)) after = readFileSync(absolute, "utf8")
+  } catch {
+    after = ""
+  }
+  const max = 600_000
+  return { before: before.slice(0, max), after: after.slice(0, max) }
 }
 
 function requireProject(): Project {
@@ -516,7 +541,43 @@ export const handlers: Record<RpcName, Handler> = {
     return (messages ?? []).map<SessionEntry>((entry) => ({ info: entry.info, parts: entry.parts ?? [] }))
   },
 
-  "session.diff": (id: string) => call<FileDiff[]>(clientFor().session.diff({ path: { id } })),
+  "session.diff": async (id: string) => {
+    const client = clientFor()
+    let messages: Array<{ info: Message; parts: Part[] }> = []
+    try {
+      messages = await call<Array<{ info: Message; parts: Part[] }>>(
+        client.session.messages({ path: { id }, query: { limit: 200 } }),
+      )
+    } catch {
+      messages = []
+    }
+    const userMessages = (messages ?? []).filter((entry) => entry.info.role === "user").slice(-8)
+    if (userMessages.length === 0) {
+      return call<FileDiff[]>(client.session.diff({ path: { id } }))
+    }
+    const diffs = await Promise.all(
+      userMessages.map((entry) =>
+        call<FileDiff[]>(client.session.diff({ path: { id }, query: { messageID: entry.info.id } })).catch(
+          () => [] as FileDiff[],
+        ),
+      ),
+    )
+    const merged = new Map<string, FileDiff>()
+    const order: string[] = []
+    for (const diff of diffs) {
+      for (const file of diff ?? []) {
+        if (!merged.has(file.file)) order.push(file.file)
+        merged.set(file.file, file)
+      }
+    }
+    const project = requireProject()
+    return order.flatMap((file) => {
+      const value = merged.get(file)
+      if (!value) return []
+      if (value.before || value.after) return [value]
+      return [{ ...value, ...readGitFileDiff(project.path, file) }]
+    })
+  },
 
   "session.usage": async (ids: string[]) => {
     const client = clientFor()
@@ -610,6 +671,40 @@ export const handlers: Record<RpcName, Handler> = {
       }),
     )
     return result === true
+  },
+
+  "file.list": async (path: string) => {
+    const nodes = await call<Array<{ name: string; path: string; absolute: string; type: "file" | "directory"; ignored: boolean }>>(
+      clientFor().file.list({ query: { path } }),
+    )
+    return (nodes ?? []).map<FileNodeInfo>((node) => ({
+      name: node.name,
+      path: node.path,
+      absolute: node.absolute,
+      type: node.type,
+      ignored: node.ignored,
+    }))
+  },
+
+  "file.read": async (path: string) => {
+    const data = await call<{ type: "text" | "binary"; content: string; mimeType?: string }>(
+      clientFor().file.read({ query: { path } }),
+    )
+    const max = 600_000
+    const truncated = data.content.length > max
+    const result: FileContentInfo = {
+      path,
+      absolute: resolve(requireDirectory(), path),
+      type: data.type,
+      content: data.type === "text" ? data.content.slice(0, max) : "",
+      truncated,
+      mimeType: data.mimeType,
+    }
+    return result
+  },
+
+  "file.find": async (query: string) => {
+    return call<string[]>(clientFor().find.files({ query: { query } }))
   },
 
   "config.read": (scope: ConfigScope) => readRawConfig(scope),

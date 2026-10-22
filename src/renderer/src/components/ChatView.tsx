@@ -2,9 +2,9 @@ import clsx from "clsx"
 import {
   ArrowUp,
   Check,
-  ChevronRight,
   CornerUpLeft,
   Cpu,
+  FolderSearch,
   GitBranch,
   MessageSquare,
   Network,
@@ -14,83 +14,14 @@ import {
   Terminal,
 } from "lucide-react"
 import { useEffect, useMemo, useRef, useState } from "react"
-import type { FileDiff } from "@shared/types"
 import { useStudio } from "../store/useStore"
 import { AgentPicker, ModelPicker } from "./ModelPicker"
 import { MessageItem, OptimisticUserMessage } from "./Message"
-import { Button, EmptyState, IconButton, Modal, Spinner, StatusDot } from "./ui"
+import { Button, IconButton, Spinner, StatusDot } from "./ui"
 import { useT } from "../i18n/useT"
 import { buildSessionTree, countDescendants, sessionRootId } from "../lib/session-tree"
 import { TaskTree } from "./TaskTree"
-
-function DiffModal() {
-  const open = useStudio((state) => state.diffOpen)
-  const loading = useStudio((state) => state.diffLoading)
-  const diff = useStudio((state) => state.diff)
-  const close = useStudio((state) => state.closeDiff)
-  const { t } = useT()
-  const totalAdd = diff.reduce((sum, file) => sum + file.additions, 0)
-  const totalDel = diff.reduce((sum, file) => sum + file.deletions, 0)
-
-  return (
-    <Modal
-      open={open}
-      onClose={close}
-      title={
-        <span className="flex items-center gap-2">
-          <GitBranch size={15} className="text-accent" />
-          {t("chat.changesTitle")}
-          <span className="text-[11px] font-normal text-faint">
-            {t("chat.changesSummary", { files: diff.length, additions: totalAdd, deletions: totalDel })}
-          </span>
-        </span>
-      }
-      width="max-w-4xl"
-    >
-      {loading ? (
-        <div className="flex items-center justify-center py-14 text-muted">
-          <Spinner />
-        </div>
-      ) : diff.length === 0 ? (
-        <EmptyState title={t("chat.noChanges")} description={t("chat.noChangesHint")} />
-      ) : (
-        <div className="space-y-3">
-          {diff.map((file) => (
-            <DiffFile key={file.file} file={file} />
-          ))}
-        </div>
-      )}
-    </Modal>
-  )
-}
-
-function DiffFile({ file }: { file: FileDiff }) {
-  const { t } = useT()
-  return (
-    <details className="overflow-hidden rounded-lg border border-line bg-canvas/60">
-      <summary className="flex cursor-pointer select-none items-center gap-2 px-3 py-2 font-mono text-[11.5px] hover:bg-line-soft/40">
-        <ChevronRight size={12} className="text-faint" />
-        <span className="min-w-0 flex-1 truncate">{file.file}</span>
-        <span className="text-good">+{file.additions}</span>
-        <span className="text-bad">-{file.deletions}</span>
-      </summary>
-      <div className="grid gap-2 border-t border-line p-2 md:grid-cols-2">
-        <div>
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-faint">{t("chat.before")}</div>
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border border-line bg-canvas p-2 font-mono text-[10.5px] leading-relaxed text-muted">
-            {file.before || t("chat.emptyFile")}
-          </pre>
-        </div>
-        <div>
-          <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-faint">{t("chat.after")}</div>
-          <pre className="max-h-64 overflow-auto whitespace-pre-wrap break-words rounded border border-line bg-canvas p-2 font-mono text-[10.5px] leading-relaxed text-muted">
-            {file.after || t("chat.emptyFile")}
-          </pre>
-        </div>
-      </div>
-    </details>
-  )
-}
+import { FilePanel, type FilePanelTab } from "./FilePanel"
 
 export function ChatView() {
   const state = useStudio((store) => store.state)
@@ -107,7 +38,6 @@ export function ChatView() {
   const setView = useStudio((store) => store.setView)
   const send = useStudio((store) => store.send)
   const abort = useStudio((store) => store.abort)
-  const showDiff = useStudio((store) => store.showDiff)
   const renameSession = useStudio((store) => store.renameSession)
   const newSession = useStudio((store) => store.newSession)
   const openSession = useStudio((store) => store.openSession)
@@ -118,7 +48,13 @@ export function ChatView() {
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState("")
   const [stickToBottom, setStickToBottom] = useState(true)
-  const [treeOpen, setTreeOpen] = useState(() => localStorage.getItem("meowstudio:treeOpen") === "1")
+  const [panel, setPanel] = useState<"none" | "files" | "tasks">(() => {
+    const stored = localStorage.getItem("meowstudio:panel")
+    return stored === "files" || stored === "tasks" ? stored : "none"
+  })
+  const [fileTab, setFileTab] = useState<FilePanelTab>(() =>
+    localStorage.getItem("meowstudio:fileTab") === "changes" ? "changes" : "explorer",
+  )
   const scrollRef = useRef<HTMLDivElement>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -130,13 +66,21 @@ export function ChatView() {
   const treeRootId = useMemo(() => sessionRootId(sessions, activeSessionId), [sessions, activeSessionId])
   const tree = useMemo(() => buildSessionTree(sessions, treeRootId), [sessions, treeRootId])
   const childCount = countDescendants(tree)
-  const toggleTree = () => {
-    setTreeOpen((current) => {
-      const next = !current
-      localStorage.setItem("meowstudio:treeOpen", next ? "1" : "0")
-      return next
-    })
+
+  const setPanelPersisted = (next: "none" | "files" | "tasks") => {
+    localStorage.setItem("meowstudio:panel", next)
+    setPanel(next)
   }
+  const openFiles = (tab: FilePanelTab) => {
+    setFileTab(tab)
+    localStorage.setItem("meowstudio:fileTab", tab)
+    setPanelPersisted("files")
+  }
+  const changeFileTab = (tab: FilePanelTab) => {
+    setFileTab(tab)
+    localStorage.setItem("meowstudio:fileTab", tab)
+  }
+  const toggleTasks = () => setPanelPersisted(panel === "tasks" ? "none" : "tasks")
 
   const suggestions = [
     { title: t("chat.suggestion.explain.title"), prompt: t("chat.suggestion.explain.prompt") },
@@ -264,9 +208,19 @@ export function ChatView() {
           )}
           <Button
             variant="ghost"
+            data-action="files"
+            className={clsx("h-8 px-2 text-[11.5px]", panel === "files" && "bg-raised text-accent")}
+            onClick={() => openFiles("explorer")}
+            title={t("files.title")}
+          >
+            <FolderSearch size={13} />
+            <span className="hidden md:inline">{t("files.title")}</span>
+          </Button>
+          <Button
+            variant="ghost"
             data-action="task-tree"
-            className={clsx("h-8 px-2 text-[11.5px]", treeOpen && "bg-raised text-accent")}
-            onClick={toggleTree}
+            className={clsx("h-8 px-2 text-[11.5px]", panel === "tasks" && "bg-raised text-accent")}
+            onClick={toggleTasks}
             title={t("tree.title")}
           >
             <Network size={13} />
@@ -278,7 +232,7 @@ export function ChatView() {
           <Button
             variant="ghost"
             className="h-8 px-2 text-[11.5px]"
-            onClick={() => void showDiff()}
+            onClick={() => openFiles("changes")}
             disabled={!session}
             title={t("chat.sessionChanges")}
           >
@@ -438,8 +392,8 @@ export function ChatView() {
 
       </div>
 
-      {treeOpen && <TaskTree onClose={() => setTreeOpen(false)} />}
-      <DiffModal />
+      {panel === "files" && <FilePanel tab={fileTab} onTabChange={changeFileTab} onClose={() => setPanelPersisted("none")} />}
+      {panel === "tasks" && <TaskTree onClose={() => setPanelPersisted("none")} />}
     </div>
   )
 }

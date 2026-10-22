@@ -141,6 +141,23 @@ export interface SessionEntry {
   parts: Part[]
 }
 
+export interface FileNodeInfo {
+  name: string
+  path: string
+  absolute: string
+  type: "file" | "directory"
+  ignored: boolean
+}
+
+export interface FileContentInfo {
+  path: string
+  absolute: string
+  type: "text" | "binary"
+  content: string
+  truncated: boolean
+  mimeType?: string
+}
+
 export interface SessionUsage {
   sessionID: string
   cost: number
@@ -413,6 +430,9 @@ export interface RpcMap {
   "session.update": { args: [id: string, title: string]; result: Session }
   "session.messages": { args: [id: string]; result: SessionEntry[] }
   "session.usage": { args: [ids: string[]]; result: Record<string, SessionUsage> }
+  "file.list": { args: [path: string]; result: FileNodeInfo[] }
+  "file.read": { args: [path: string]; result: FileContentInfo }
+  "file.find": { args: [query: string]; result: string[] }
   "session.diff": { args: [id: string]; result: FileDiff[] }
   "session.abort": { args: [id: string]; result: boolean }
   "session.status": { args: []; result: Record<string, SessionStatus> }

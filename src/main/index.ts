@@ -1,4 +1,4 @@
-﻿import { app, BrowserWindow, ipcMain, Menu, screen, shell } from "electron"
+import { app, BrowserWindow, ipcMain, Menu, screen, shell } from "electron"
 import { copyFileSync, cpSync, existsSync, mkdirSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
@@ -351,6 +351,96 @@ async function captureScreenshot(): Promise<void> {
   const initial = await mainWindow.webContents.capturePage()
   writeFileSync(`${target}-initial.png`, initial.toPNG())
 
+  if (process.env.STUDIO_DEMO_CHANGES === "1") {
+    try {
+      await ensureBackend(false)
+      const state = buildAppState()
+      const sessions = (await dispatch("session.list", [])) as Array<{ id: string; parentID?: string }>
+      let diffSession: { id: string } | null = null
+      for (const session of sessions.filter((entry) => !entry.parentID).slice(0, 12)) {
+        const diff = (await dispatch("session.diff", [session.id])) as unknown[]
+        if (Array.isArray(diff) && diff.length > 0) {
+          diffSession = session
+          break
+        }
+      }
+      if (diffSession && state.activeProjectId) {
+        await mainWindow.webContents.executeJavaScript(
+          `(() => {
+            localStorage.setItem("meowstudio:view", "chat");
+            localStorage.setItem("meowstudio:panel", "files");
+            localStorage.setItem("meowstudio:fileTab", "changes");
+            localStorage.setItem("meowstudio:lastSession:${state.activeProjectId}", ${JSON.stringify(diffSession.id)});
+            location.reload();
+            return true
+          })()`,
+        )
+        await new Promise((resolve) => setTimeout(resolve, 6500))
+        const image = await mainWindow.webContents.capturePage()
+        writeFileSync(`${process.env.STUDIO_SCREENSHOT}-changes.png`, image.toPNG())
+        const clickedDiff = await mainWindow.webContents.executeJavaScript(
+          `(() => {
+            const node = document.querySelector('main [data-diff-file]');
+            if (node) { node.click(); return true }
+            return false
+          })()`,
+        )
+        if (clickedDiff) {
+          await new Promise((resolve) => setTimeout(resolve, 900))
+          const diffImage = await mainWindow.webContents.capturePage()
+          writeFileSync(`${process.env.STUDIO_SCREENSHOT}-changes-diff.png`, diffImage.toPNG())
+        }
+        log("app", "screenshot changes written")
+      } else {
+        log("app", "no session diff found for screenshot")
+      }
+    } catch (error) {
+      log("app", `changes demo failed: ${(error as Error).message}`)
+    }
+    stopBackendImmediate()
+    app.exit(0)
+    return
+  }
+
+  if (process.env.STUDIO_DEMO_FILES === "1") {
+    try {
+      await ensureBackend(false)
+      const state = buildAppState()
+      if (state.activeProjectId) {
+        await mainWindow.webContents.executeJavaScript(
+          `(() => {
+            localStorage.setItem("meowstudio:view", "chat");
+            localStorage.setItem("meowstudio:panel", "files");
+            localStorage.setItem("meowstudio:fileTab", "explorer");
+            location.reload();
+            return true
+          })()`,
+        )
+        await new Promise((resolve) => setTimeout(resolve, 6500))
+        const image = await mainWindow.webContents.capturePage()
+        writeFileSync(`${target}-files.png`, image.toPNG())
+        const clickedFile = await mainWindow.webContents.executeJavaScript(
+          `(() => {
+            const node = document.querySelector('main [data-file-path="README.md"]');
+            if (node) { node.click(); return true }
+            return false
+          })()`,
+        )
+        if (clickedFile) {
+          await new Promise((resolve) => setTimeout(resolve, 900))
+          const preview = await mainWindow.webContents.capturePage()
+          writeFileSync(`${target}-file-preview.png`, preview.toPNG())
+        }
+        log("app", "screenshot files written")
+      }
+    } catch (error) {
+      log("app", `files demo failed: ${(error as Error).message}`)
+    }
+    stopBackendImmediate()
+    app.exit(0)
+    return
+  }
+
   if (process.env.STUDIO_DEMO_TREE === "1") {
     try {
       await ensureBackend(false)
@@ -363,7 +453,7 @@ async function captureScreenshot(): Promise<void> {
           `(() => {
             localStorage.setItem("meowstudio:view", "chat");
             localStorage.setItem("meowstudio:lastSession:${state.activeProjectId}", ${JSON.stringify(root.id)});
-            localStorage.setItem("meowstudio:treeOpen", "1");
+            localStorage.setItem("meowstudio:panel", "tasks");
             location.reload();
             return true
           })()`,

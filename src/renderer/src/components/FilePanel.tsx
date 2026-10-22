@@ -1,0 +1,519 @@
+import clsx from "clsx"
+import {
+  ChevronDown,
+  ChevronRight,
+  Copy,
+  ExternalLink,
+  File,
+  FileCode2,
+  FileJson,
+  FileText,
+  Folder,
+  FolderOpen,
+  FolderSearch,
+  GitBranch,
+  Image,
+  RefreshCw,
+  Search,
+  X,
+} from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
+import type { FileContentInfo, FileDiff, FileNodeInfo } from "@shared/types"
+import { EmptyState, IconButton, Spinner } from "./ui"
+import { UnifiedDiff } from "./UnifiedDiff"
+import { rpc } from "../lib/rpc"
+import { useStudio } from "../store/useStore"
+import { useT } from "../i18n/useT"
+
+export type FilePanelTab = "explorer" | "changes"
+
+function sortNodes(a: FileNodeInfo, b: FileNodeInfo): number {
+  if (a.type !== b.type) return a.type === "directory" ? -1 : 1
+  return a.name.localeCompare(b.name)
+}
+
+function FileIcon({ name }: { name: string }) {
+  const lower = name.toLowerCase()
+  if (/\.(png|jpe?g|gif|webp|svg|ico|bmp)$/.test(lower)) return <Image size={13} className="shrink-0 text-faint" />
+  if (/\.(json|jsonc)$/.test(lower)) return <FileJson size={13} className="shrink-0 text-faint" />
+  if (/\.(ts|tsx|js|jsx|mjs|cjs|vue|svelte|py|go|rs|java|cs|cpp|c|h|css|scss|html)$/.test(lower)) {
+    return <FileCode2 size={13} className="shrink-0 text-faint" />
+  }
+  if (/\.(md|mdx|txt|log|yml|yaml|toml|ini|env)$/.test(lower)) return <FileText size={13} className="shrink-0 text-faint" />
+  return <File size={13} className="shrink-0 text-faint" />
+}
+
+function CodePreview({ content }: { content: FileContentInfo }) {
+  const { t } = useT()
+  const lines = useMemo(() => content.content.split(/\r?\n/), [content.content])
+  const max = 4000
+  const visible = lines.slice(0, max)
+  const truncated = content.truncated || lines.length > max
+  return (
+    <div className="min-w-max py-2 font-mono text-[11px] leading-[1.55]">
+      {visible.map((line, index) => (
+        <div key={index} className="flex hover:bg-line-soft/40">
+          <span className="w-10 shrink-0 select-none border-r border-line/60 pr-1.5 text-right text-faint/60">
+            {index + 1}
+          </span>
+          <span className="whitespace-pre px-2 text-muted">{line || " "}</span>
+        </div>
+      ))}
+      {truncated && (
+        <div className="sticky bottom-0 border-t border-line bg-surface px-3 py-1.5 text-[10px] text-faint">
+          {t("files.truncated")}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function FilePanel({
+  tab,
+  onTabChange,
+  onClose,
+}: {
+  tab: FilePanelTab
+  onTabChange: (tab: FilePanelTab) => void
+  onClose: () => void
+}) {
+  const { t } = useT()
+  const state = useStudio((store) => store.state)
+  const activeSessionId = useStudio((store) => store.activeSessionId)
+  const addToast = useStudio((store) => store.addToast)
+  const project = state?.activeProject ?? null
+
+  const [query, setQuery] = useState("")
+  const [searchResults, setSearchResults] = useState<string[] | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [children, setChildren] = useState<Record<string, FileNodeInfo[]>>({})
+  const [expanded, setExpanded] = useState<Set<string>>(new Set(["."]))
+  const [loadingDirs, setLoadingDirs] = useState<Set<string>>(new Set())
+  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [content, setContent] = useState<FileContentInfo | null>(null)
+  const [contentLoading, setContentLoading] = useState(false)
+  const [diff, setDiff] = useState<FileDiff[]>([])
+  const [diffLoading, setDiffLoading] = useState(false)
+  const [selectedDiffPath, setSelectedDiffPath] = useState<string | null>(null)
+
+  const loadDir = async (path: string) => {
+    if (state?.backend.state !== "running") return
+    setLoadingDirs((current) => new Set(current).add(path))
+    try {
+      const nodes = await rpc("file.list", path)
+      setChildren((current) => ({
+        ...current,
+        [path]: nodes.filter((node) => !node.ignored).sort(sortNodes),
+      }))
+    } catch (error) {
+      addToast("error", (error as Error).message)
+    } finally {
+      setLoadingDirs((current) => {
+        const next = new Set(current)
+        next.delete(path)
+        return next
+      })
+    }
+  }
+
+  useEffect(() => {
+    setChildren({})
+    setExpanded(new Set(["."]))
+    setSelectedPath(null)
+    setContent(null)
+    setQuery("")
+    setSearchResults(null)
+    if (project && state?.backend.state === "running") void loadDir(".")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.id])
+
+  useEffect(() => {
+    if (state?.backend.state === "running" && project && !children["."]) void loadDir(".")
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state?.backend.state, project?.id])
+
+  useEffect(() => {
+    const value = query.trim()
+    if (!value) {
+      setSearchResults(null)
+      setSearching(false)
+      return
+    }
+    if (state?.backend.state !== "running") {
+      setSearchResults([])
+      setSearching(false)
+      return
+    }
+    setSearching(true)
+    const timer = setTimeout(() => {
+      void rpc("file.find", value)
+        .then((results) => setSearchResults(results))
+        .catch(() => setSearchResults([]))
+        .finally(() => setSearching(false))
+    }, 250)
+    return () => clearTimeout(timer)
+  }, [query])
+
+  const loadDiff = async () => {
+    if (state?.backend.state !== "running") return
+    if (!activeSessionId) {
+      setDiff([])
+      setSelectedDiffPath(null)
+      return
+    }
+    setDiffLoading(true)
+    try {
+      const next = await rpc("session.diff", activeSessionId)
+      setDiff(next)
+      setSelectedDiffPath((current) => (current && next.some((file) => file.file === current) ? current : next[0]?.file ?? null))
+    } catch (error) {
+      addToast("error", (error as Error).message)
+    } finally {
+      setDiffLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (tab === "changes") void loadDiff()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, activeSessionId, state?.backend.state])
+
+  const selectFile = async (path: string) => {
+    setSelectedPath(path)
+    setContentLoading(true)
+    try {
+      setContent(await rpc("file.read", path))
+    } catch (error) {
+      setContent(null)
+      addToast("error", (error as Error).message)
+    } finally {
+      setContentLoading(false)
+    }
+  }
+
+  const toggleDir = (node: FileNodeInfo) => {
+    const open = expanded.has(node.path)
+    setExpanded((current) => {
+      const next = new Set(current)
+      if (open) next.delete(node.path)
+      else next.add(node.path)
+      return next
+    })
+    if (!open && !children[node.path]) void loadDir(node.path)
+  }
+
+  const renderTree = (path: string, depth: number) => {
+    const nodes = children[path] ?? []
+    return nodes.map((node) => {
+      if (node.type === "directory") {
+        const open = expanded.has(node.path)
+        return (
+          <div key={node.path}>
+            <button
+              data-file-path={node.path}
+              className="flex w-full items-center gap-1 rounded px-1 py-[3px] text-left text-[11.5px] text-muted transition-colors hover:bg-line-soft/60 hover:text-ink"
+              style={{ paddingLeft: 6 + depth * 13 }}
+              onClick={() => toggleDir(node)}
+            >
+              {open ? <ChevronDown size={11} className="shrink-0 text-faint" /> : <ChevronRight size={11} className="shrink-0 text-faint" />}
+              {open ? <FolderOpen size={13} className="shrink-0 text-accent/80" /> : <Folder size={13} className="shrink-0 text-accent/70" />}
+              <span className="truncate">{node.name}</span>
+            </button>
+            {open &&
+              (loadingDirs.has(node.path) ? (
+                <div className="flex items-center gap-1.5 py-1 text-[10px] text-faint" style={{ paddingLeft: 25 + depth * 13 }}>
+                  <Spinner size={9} /> {t("common.loading")}
+                </div>
+              ) : (
+                renderTree(node.path, depth + 1)
+              ))}
+          </div>
+        )
+      }
+      return (
+        <button
+          key={node.path}
+          data-file-path={node.path}
+          className={clsx(
+            "flex w-full items-center gap-1.5 rounded px-1 py-[3px] text-left text-[11.5px] transition-colors",
+            selectedPath === node.path ? "bg-accent-soft/40 text-ink" : "text-muted hover:bg-line-soft/60 hover:text-ink",
+          )}
+          style={{ paddingLeft: 8 + depth * 13 }}
+          onClick={() => void selectFile(node.path)}
+        >
+          <span className="w-[11px] shrink-0" />
+          <FileIcon name={node.name} />
+          <span className="truncate">{node.name}</span>
+        </button>
+      )
+    })
+  }
+
+  const totals = diff.reduce(
+    (sum, file) => ({ additions: sum.additions + file.additions, deletions: sum.deletions + file.deletions }),
+    { additions: 0, deletions: 0 },
+  )
+  const selectedDiff = diff.find((file) => file.file === selectedDiffPath) ?? null
+
+  const refreshCurrent = () => {
+    if (tab === "explorer") {
+      setChildren({})
+      setExpanded(new Set(["."]))
+      void loadDir(".")
+    } else {
+      void loadDiff()
+    }
+  }
+
+  return (
+    <aside className="flex h-full w-[420px] shrink-0 flex-col border-l border-line bg-surface/85">
+      <div className="flex items-center gap-1 border-b border-line px-1.5 py-1.5">
+        <button
+          data-file-tab="explorer"
+          className={clsx(
+            "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11.5px] font-medium transition-colors",
+            tab === "explorer" ? "bg-raised text-ink" : "text-muted hover:bg-line-soft hover:text-ink",
+          )}
+          onClick={() => onTabChange("explorer")}
+        >
+          <FolderSearch size={12} className={tab === "explorer" ? "text-accent" : "text-faint"} />
+          {t("files.explorer")}
+        </button>
+        <button
+          data-file-tab="changes"
+          className={clsx(
+            "flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[11.5px] font-medium transition-colors",
+            tab === "changes" ? "bg-raised text-ink" : "text-muted hover:bg-line-soft hover:text-ink",
+          )}
+          onClick={() => onTabChange("changes")}
+        >
+          <GitBranch size={12} className={tab === "changes" ? "text-accent" : "text-faint"} />
+          {t("files.changes")}
+          {diff.length > 0 && <span className="text-[9px] text-faint">{diff.length}</span>}
+        </button>
+        <div className="ml-auto flex items-center gap-0.5">
+          <IconButton className="h-6 w-6" title={t("files.refresh")} onClick={refreshCurrent}>
+            <RefreshCw size={11} />
+          </IconButton>
+          <IconButton className="h-6 w-6" title={t("common.close")} onClick={onClose}>
+            <X size={12} />
+          </IconButton>
+        </div>
+      </div>
+
+      {tab === "explorer" ? (
+        <>
+          <div className="flex items-center gap-1.5 border-b border-line px-2 py-1.5">
+            <Search size={12} className="text-faint" />
+            <input
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder={t("files.searchFiles")}
+              className="w-full bg-transparent text-[11.5px] outline-none placeholder:text-faint"
+            />
+            {searching && <Spinner size={10} />}
+          </div>
+
+          <div className="min-h-0 flex-[0.9] overflow-y-auto px-1 py-1.5">
+            {query.trim() ? (
+              <div>
+                {searchResults === null ? (
+                  <div className="flex items-center justify-center py-6 text-faint">
+                    <Spinner />
+                  </div>
+                ) : searchResults.length === 0 ? (
+                  <div className="py-6 text-center text-[11px] text-faint">{t("files.noFiles")}</div>
+                ) : (
+                  <>
+                    <div className="px-2 pb-1 text-[9.5px] uppercase tracking-wider text-faint">
+                      {t("files.searchResults", { count: searchResults.length })}
+                    </div>
+                    {searchResults.map((path) => (
+                      <button
+                        key={path}
+                        data-file-path={path}
+                        className={clsx(
+                          "flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[11px] transition-colors",
+                          selectedPath === path ? "bg-accent-soft/40 text-ink" : "text-muted hover:bg-line-soft/60 hover:text-ink",
+                        )}
+                        onClick={() => void selectFile(path)}
+                      >
+                        <FileIcon name={path} />
+                        <span className="truncate">{path}</span>
+                      </button>
+                    ))}
+                  </>
+                )}
+              </div>
+            ) : project ? (
+              <>
+                <button
+                  className="flex w-full items-center gap-1 rounded px-1 py-[3px] text-left text-[11.5px] font-medium text-ink hover:bg-line-soft/60"
+                  onClick={() => {
+                    const open = expanded.has(".")
+                    setExpanded((current) => {
+                      const next = new Set(current)
+                      if (open) next.delete(".")
+                      else next.add(".")
+                      return next
+                    })
+                    if (!open && !children["."]) void loadDir(".")
+                  }}
+                >
+                  {expanded.has(".") ? <ChevronDown size={11} className="text-faint" /> : <ChevronRight size={11} className="text-faint" />}
+                  <FolderOpen size={13} className="text-accent" />
+                  <span className="truncate">{project.name}</span>
+                </button>
+                {expanded.has(".") &&
+                  (loadingDirs.has(".") && !children["."] ? (
+                    <div className="flex items-center gap-1.5 px-6 py-2 text-[10px] text-faint">
+                      <Spinner size={9} /> {t("common.loading")}
+                    </div>
+                  ) : (
+                    renderTree(".", 1)
+                  ))}
+                {(children["."]?.length ?? 0) === 0 && !loadingDirs.has(".") && (
+                  <div className="px-3 py-6 text-center text-[11px] text-faint">{t("files.noFiles")}</div>
+                )}
+              </>
+            ) : (
+              <div className="px-3 py-6 text-center text-[11px] text-faint">{t("files.noFiles")}</div>
+            )}
+          </div>
+
+          <div className="flex min-h-0 flex-1 flex-col border-t border-line">
+            {selectedPath ? (
+              <>
+                <div className="flex items-center gap-1.5 border-b border-line/70 px-2 py-1.5">
+                  <FileText size={12} className="shrink-0 text-accent" />
+                  <span className="min-w-0 flex-1 truncate font-mono text-[10.5px] text-muted" title={selectedPath}>
+                    {selectedPath}
+                  </span>
+                  <span className="shrink-0 text-[9.5px] text-faint">
+                    {content
+                      ? (() => {
+                          const count = content.content ? content.content.split(/\r?\n/).length : 0
+                          return count === 1 ? t("files.line", { count }) : t("files.lines", { count })
+                        })()
+                      : ""}
+                  </span>
+                  <IconButton
+                    className="h-6 w-6"
+                    title={t("files.copyPath")}
+                    onClick={() => {
+                      void navigator.clipboard.writeText(content?.absolute ?? selectedPath).then(
+                        () => addToast("success", t("common.copied")),
+                        () => addToast("error", t("common.error")),
+                      )
+                    }}
+                  >
+                    <Copy size={11} />
+                  </IconButton>
+                  <IconButton
+                    className="h-6 w-6"
+                    title={t("files.reveal")}
+                    onClick={() => {
+                      if (content?.absolute) void rpc("app.showItem", content.absolute)
+                    }}
+                    disabled={!content?.absolute}
+                  >
+                    <FolderOpen size={11} />
+                  </IconButton>
+                  <IconButton
+                    className="h-6 w-6"
+                    title={t("files.openExternal")}
+                    onClick={() => {
+                      if (content?.absolute) {
+                        void rpc("app.openPath", content.absolute).catch((error) => addToast("error", (error as Error).message))
+                      }
+                    }}
+                    disabled={!content?.absolute}
+                  >
+                    <ExternalLink size={11} />
+                  </IconButton>
+                </div>
+                <div className="min-h-0 flex-1 overflow-auto">
+                  {contentLoading ? (
+                    <div className="flex items-center justify-center py-10 text-faint">
+                      <Spinner />
+                    </div>
+                  ) : content ? (
+                    content.type === "binary" ? (
+                      <div className="flex flex-col items-center justify-center gap-2 py-10 text-faint">
+                        <FileText size={20} />
+                        <span className="text-[11px]">{t("files.binary")}</span>
+                      </div>
+                    ) : (
+                      <CodePreview content={content} />
+                    )
+                  ) : null}
+                </div>
+              </>
+            ) : (
+              <div className="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
+                <FileText size={22} className="text-faint/60" />
+                <div className="text-[12px] font-medium text-muted">{t("files.selectFile")}</div>
+                <div className="text-[10.5px] leading-relaxed text-faint">{t("files.selectFileHint")}</div>
+              </div>
+            )}
+          </div>
+        </>
+      ) : (
+        <div className="flex min-h-0 flex-1 flex-col">
+          {activeSessionId ? (
+            <>
+              <div className="flex items-center gap-2 border-b border-line px-2.5 py-2 text-[10.5px] text-muted">
+                <span>{t("files.changedFiles", { count: diff.length })}</span>
+                <span className="text-good">+{totals.additions}</span>
+                <span className="text-bad">-{totals.deletions}</span>
+              </div>
+              {diffLoading ? (
+                <div className="flex items-center justify-center py-10 text-faint">
+                  <Spinner />
+                </div>
+              ) : diff.length === 0 ? (
+                <div className="px-3 py-8">
+                  <EmptyState title={t("files.noChanges")} description={t("files.noChangesHint")} />
+                </div>
+              ) : (
+                <>
+                  <div className="max-h-[36%] min-h-[80px] overflow-y-auto border-b border-line p-1">
+                    {diff.map((file) => (
+                      <button
+                        key={file.file}
+                        data-diff-file={file.file}
+                        className={clsx(
+                          "flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[11px] transition-colors",
+                          selectedDiffPath === file.file
+                            ? "bg-accent-soft/40 text-ink"
+                            : "text-muted hover:bg-line-soft/60 hover:text-ink",
+                        )}
+                        onClick={() => setSelectedDiffPath(file.file)}
+                      >
+                        <FileCode2 size={12} className="shrink-0 text-faint" />
+                        <span className="truncate">{file.file}</span>
+                        <span className="ml-auto shrink-0 text-[9.5px] text-good">+{file.additions}</span>
+                        <span className="shrink-0 text-[9.5px] text-bad">-{file.deletions}</span>
+                      </button>
+                    ))}
+                  </div>
+                  <div className="min-h-0 flex-1 overflow-hidden">
+                    {selectedDiff ? (
+                      <UnifiedDiff before={selectedDiff.before} after={selectedDiff.after} className="h-full" />
+                    ) : (
+                      <div className="px-3 py-8 text-center text-[11px] text-faint">{t("files.selectChange")}</div>
+                    )}
+                  </div>
+                </>
+              )}
+            </>
+          ) : (
+            <div className="px-3 py-8">
+              <EmptyState title={t("files.noSession")} description={t("files.noChangesHint")} />
+            </div>
+          )}
+        </div>
+      )}
+    </aside>
+  )
+}

@@ -15,6 +15,7 @@
 - 工具调用卡片：输入、输出、耗时、错误、附件
 - 权限请求弹窗（once / always / reject）
 - 中断生成、会话 diff、token / cost 统计
+- **文件面板**：项目文件树、文件名搜索、只读预览、会话变更与统一 diff
 - 模型选择器：provider + model 搜索
 - Agent 选择器（build / plan / 自定义 primary agent）
 - 自动记住每个项目上次使用的模型与 agent
@@ -46,6 +47,30 @@ OpenCode 原生支持 primary agent 通过 `task` 工具派生子代理会话。
 ```
 
 默认值为 `1`：primary agent 可以派生 subagent，但 subagent 不能再派生下一层。
+
+### 文件与变更
+
+聊天头部的 **Files** 按钮会打开右侧文件面板：
+
+- **Explorer**
+  - 懒加载项目文件树，自动忽略被 opencode 标记为 ignored 的路径
+  - 文件名搜索（走 opencode 的 fuzzy file find）
+  - 文件只读预览：行号、行数、复制路径、在文件夹中显示、用默认应用打开
+  - 二进制文件会显示提示，而不是强行渲染
+- **Changes**
+  - 当前会话最近 8 轮对话涉及的变更文件
+  - 每个文件显示增删行数
+  - 统一 diff：旧/新行号、上下文、绿色新增、红色删除、超长截断
+  - 支持刷新
+- 面板状态和当前 tab 会被记住
+- 点击子代理会话时，Changes 会切换到该子代理的变更
+
+diff 内容优先使用 opencode 返回的 before/after。如果当前版本的 session diff 只返回统计，
+应用会用 `git show HEAD:<file>` 与工作区文件内容补全文本 diff。因此：
+
+- Git 项目：通常可以获得完整的当前工作区 diff
+- 非 Git 项目：如果 opencode 不返回内容，则只能显示文件统计
+- 超过大小/行数限制的 diff 会显示截断或过大提示
 
 ### Provider
 
@@ -372,8 +397,8 @@ npm start
 
 当前是可运行 MVP，以下能力尚未实现或只做了基础版本：
 
-- 文件树、内置终端 / PTY、内嵌代码编辑器
-- 内联逐行 diff（目前显示 before/after 与增删统计）
+- 内置终端 / PTY、内嵌可编辑代码编辑器（当前文件预览为只读）
+- 并排 diff 视图（当前为统一 diff；非 Git 项目的 diff 内容可能不可用）
 - 图片 / 文件附件上传
 - 多窗口、多 session 并行展示
 - 自动更新（electron-updater）
