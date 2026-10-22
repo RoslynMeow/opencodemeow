@@ -302,6 +302,25 @@ async function runSmoke(): Promise<void> {
       // ignore cleanup failure
     }
     results.elapsedMs = Date.now() - started
+    if (process.env.STUDIO_SMOKE_GIT === "1") {
+      log("smoke", "git integration")
+      const before = await dispatch("git.info", [])
+      results.gitInfo = before
+      if (before && typeof before === "object" && "isRepo" in before && before.isRepo) {
+        await dispatch("git.stage", [["new.txt"]])
+        const commit = (await dispatch("git.commit", ["git smoke test"])) as {
+          ok: boolean
+          output: string
+          info: { clean: boolean; staged: unknown[] }
+        }
+        results.gitCommit = {
+          ok: commit.ok,
+          output: commit.output.slice(0, 200),
+          clean: commit.info.clean,
+          staged: commit.info.staged.length,
+        }
+      }
+    }
     if (process.env.STUDIO_SMOKE_PROFILE === "1") {
       log("smoke", "isolated profile")
       await dispatch("app.updateSettings", [{ profile: "isolated" }])
@@ -350,6 +369,46 @@ async function captureScreenshot(): Promise<void> {
   const { writeFileSync } = await import("node:fs")
   const initial = await mainWindow.webContents.capturePage()
   writeFileSync(`${target}-initial.png`, initial.toPNG())
+
+  if (process.env.STUDIO_DEMO_GIT === "1") {
+    try {
+      await ensureBackend(false)
+      const state = buildAppState()
+      if (state.activeProjectId) {
+        await mainWindow.webContents.executeJavaScript(
+          `(() => {
+            localStorage.setItem("meowstudio:view", "chat");
+            localStorage.setItem("meowstudio:panel", "files");
+            localStorage.setItem("meowstudio:fileTab", "changes");
+            localStorage.setItem("meowstudio:changeTab", "git");
+            location.reload();
+            return true
+          })()`,
+        )
+        await new Promise((resolve) => setTimeout(resolve, 6500))
+        const image = await mainWindow.webContents.capturePage()
+        writeFileSync(`${target}-git.png`, image.toPNG())
+        const clickedFile = await mainWindow.webContents.executeJavaScript(
+          `(() => {
+            const node = document.querySelector("main [data-git-file]");
+            if (node) { node.click(); return true }
+            return false
+          })()`,
+        )
+        if (clickedFile) {
+          await new Promise((resolve) => setTimeout(resolve, 900))
+          const diff = await mainWindow.webContents.capturePage()
+          writeFileSync(`${target}-git-diff.png`, diff.toPNG())
+        }
+        log("app", "screenshot git written")
+      }
+    } catch (error) {
+      log("app", `git demo failed: ${(error as Error).message}`)
+    }
+    stopBackendImmediate()
+    app.exit(0)
+    return
+  }
 
   if (process.env.STUDIO_DEMO_CHANGES === "1") {
     try {

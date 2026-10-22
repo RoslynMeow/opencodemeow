@@ -16,6 +16,7 @@
 - 权限请求弹窗（once / always / reject）
 - 中断生成、会话 diff、token / cost 统计
 - **文件面板**：项目文件树、文件名搜索、只读预览、会话变更与统一 diff
+- **Git 集成**：分支/远程状态、暂存/取消暂存、提交、staged/working tree diff
 - 模型选择器：provider + model 搜索
 - Agent 选择器（build / plan / 自定义 primary agent）
 - 自动记住每个项目上次使用的模型与 agent
@@ -71,6 +72,19 @@ diff 内容优先使用 opencode 返回的 before/after。如果当前版本的 
 - Git 项目：通常可以获得完整的当前工作区 diff
 - 非 Git 项目：如果 opencode 不返回内容，则只能显示文件统计
 - 超过大小/行数限制的 diff 会显示截断或过大提示
+
+### Git 集成
+
+**Changes** 面板内提供 `Session` 和 `Git` 两个子视图：
+
+- Git 子视图显示当前分支、领先/落后远程的提交数、staged / unstaged / untracked 文件
+- 可以逐个或批量暂存 / 取消暂存
+- 点击文件查看 staged 或 working tree 的 diff
+- 输入提交信息并直接提交（只做本地 commit）
+- 刷新按钮会重新读取 `git status`
+- 非 Git 项目会显示初始化提示，不影响 Session 变更视图
+
+当前实现只做本地操作，不包含 push / pull、分支切换、stash、冲突解决 UI，也不会读取或保存远端凭据。
 
 ### Provider
 
@@ -399,6 +413,7 @@ npm start
 
 - 内置终端 / PTY、内嵌可编辑代码编辑器（当前文件预览为只读）
 - 并排 diff 视图（当前为统一 diff；非 Git 项目的 diff 内容可能不可用）
+- Git push / pull、分支切换、stash / 冲突解决 UI
 - 图片 / 文件附件上传
 - 多窗口、多 session 并行展示
 - 自动更新（electron-updater）

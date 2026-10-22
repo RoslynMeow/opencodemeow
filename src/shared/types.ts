@@ -149,6 +149,33 @@ export interface FileNodeInfo {
   ignored: boolean
 }
 
+export interface GitFileStatus {
+  path: string
+  index: string
+  worktree: string
+  staged: boolean
+  unstaged: boolean
+  untracked: boolean
+  status: string
+}
+
+export interface GitInfo {
+  isRepo: boolean
+  root?: string
+  branch?: string
+  upstream?: string
+  ahead?: number
+  behind?: number
+  clean: boolean
+  staged: GitFileStatus[]
+  unstaged: GitFileStatus[]
+}
+
+export interface GitDiffContent {
+  before: string
+  after: string
+}
+
 export interface FileContentInfo {
   path: string
   absolute: string
@@ -433,6 +460,11 @@ export interface RpcMap {
   "file.list": { args: [path: string]; result: FileNodeInfo[] }
   "file.read": { args: [path: string]; result: FileContentInfo }
   "file.find": { args: [query: string]; result: string[] }
+  "git.info": { args: []; result: GitInfo }
+  "git.stage": { args: [paths: string[]]; result: GitInfo }
+  "git.unstage": { args: [paths: string[]]; result: GitInfo }
+  "git.commit": { args: [message: string]; result: { ok: boolean; info: GitInfo; output: string } }
+  "git.diff": { args: [path: string, staged: boolean]; result: GitDiffContent }
   "session.diff": { args: [id: string]; result: FileDiff[] }
   "session.abort": { args: [id: string]; result: boolean }
   "session.status": { args: []; result: Record<string, SessionStatus> }

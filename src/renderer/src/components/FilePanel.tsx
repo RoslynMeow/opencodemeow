@@ -12,14 +12,17 @@ import {
   FolderOpen,
   FolderSearch,
   GitBranch,
+  GitCommit,
   Image,
+  Minus,
+  Plus,
   RefreshCw,
   Search,
   X,
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import type { FileContentInfo, FileDiff, FileNodeInfo } from "@shared/types"
-import { EmptyState, IconButton, Spinner } from "./ui"
+import type { FileContentInfo, FileDiff, FileNodeInfo, GitDiffContent, GitFileStatus, GitInfo } from "@shared/types"
+import { Button, EmptyState, IconButton, Spinner } from "./ui"
 import { UnifiedDiff } from "./UnifiedDiff"
 import { rpc } from "../lib/rpc"
 import { useStudio } from "../store/useStore"
@@ -95,6 +98,17 @@ export function FilePanel({
   const [diff, setDiff] = useState<FileDiff[]>([])
   const [diffLoading, setDiffLoading] = useState(false)
   const [selectedDiffPath, setSelectedDiffPath] = useState<string | null>(null)
+  const [changeMode, setChangeMode] = useState<"session" | "git">(() =>
+    localStorage.getItem("meowstudio:changeTab") === "git" ? "git" : "session",
+  )
+  const [gitInfo, setGitInfo] = useState<GitInfo | null>(null)
+  const [gitLoading, setGitLoading] = useState(false)
+  const [selectedGitPath, setSelectedGitPath] = useState<string | null>(null)
+  const [selectedGitStaged, setSelectedGitStaged] = useState(false)
+  const [gitDiff, setGitDiff] = useState<GitDiffContent | null>(null)
+  const [gitDiffLoading, setGitDiffLoading] = useState(false)
+  const [commitMessage, setCommitMessage] = useState("")
+  const [committing, setCommitting] = useState(false)
 
   const loadDir = async (path: string) => {
     if (state?.backend.state !== "running") return
@@ -178,6 +192,84 @@ export function FilePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, activeSessionId, state?.backend.state])
 
+  const switchChangeMode = (mode: "session" | "git") => {
+    setChangeMode(mode)
+    localStorage.setItem("meowstudio:changeTab", mode)
+  }
+
+  const loadGit = async () => {
+    if (state?.backend.state !== "running") return
+    setGitLoading(true)
+    try {
+      const info = await rpc("git.info")
+      setGitInfo(info)
+      if (info.isRepo) {
+        const all = [...info.staged, ...info.unstaged]
+        const current = selectedGitPath ? all.find((file) => file.path === selectedGitPath) : undefined
+        if (!current) {
+          const first = info.unstaged[0] ?? info.staged[0]
+          if (first) {
+            setSelectedGitPath(first.path)
+            setSelectedGitStaged(info.staged.some((file) => file.path === first.path) && !info.unstaged.some((file) => file.path === first.path))
+          } else {
+            setSelectedGitPath(null)
+          }
+        }
+      } else {
+        setSelectedGitPath(null)
+      }
+    } catch (error) {
+      addToast("error", (error as Error).message)
+    } finally {
+      setGitLoading(false)
+    }
+  }
+
+  useEffect(() => {
+    if (tab === "changes" && changeMode === "git") void loadGit()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, changeMode, state?.backend.state])
+
+  useEffect(() => {
+    if (tab !== "changes" || changeMode !== "git" || !selectedGitPath) {
+      setGitDiff(null)
+      return
+    }
+    setGitDiffLoading(true)
+    void rpc("git.diff", selectedGitPath, selectedGitStaged)
+      .then((next) => setGitDiff(next))
+      .catch(() => setGitDiff(null))
+      .finally(() => setGitDiffLoading(false))
+  }, [tab, changeMode, selectedGitPath, selectedGitStaged])
+
+  const moveGit = async (paths: string[], targetStaged: boolean) => {
+    if (paths.length === 0) return
+    try {
+      const info = await rpc(targetStaged ? "git.stage" : "git.unstage", paths)
+      setGitInfo(info)
+      if (selectedGitPath && paths.includes(selectedGitPath)) setSelectedGitStaged(targetStaged)
+    } catch (error) {
+      addToast("error", (error as Error).message)
+    }
+  }
+
+  const commitChanges = async () => {
+    if (!gitInfo || !commitMessage.trim()) return
+    setCommitting(true)
+    try {
+      const result = await rpc("git.commit", commitMessage.trim())
+      setGitInfo(result.info)
+      setCommitMessage("")
+      setSelectedGitPath(null)
+      setGitDiff(null)
+      addToast("success", t("git.commitSuccess"))
+    } catch (error) {
+      addToast("error", (error as Error).message)
+    } finally {
+      setCommitting(false)
+    }
+  }
+
   const selectFile = async (path: string) => {
     setSelectedPath(path)
     setContentLoading(true)
@@ -260,9 +352,44 @@ export function FilePanel({
       setChildren({})
       setExpanded(new Set(["."]))
       void loadDir(".")
+    } else if (changeMode === "git") {
+      void loadGit()
     } else {
       void loadDiff()
     }
+  }
+
+  const gitFileRow = (file: GitFileStatus, staged: boolean) => {
+    const active = selectedGitPath === file.path && selectedGitStaged === staged
+    return (
+      <div
+        key={`${staged}-${file.path}`}
+        className="group flex items-center gap-1 rounded px-1 py-0.5 hover:bg-line-soft/60"
+      >
+        <button
+          data-git-file={file.path}
+          data-git-staged={staged ? "true" : "false"}
+          className="flex min-w-0 flex-1 items-center gap-1.5 rounded px-1 py-0.5 text-left text-[11px]"
+          onClick={() => {
+            setSelectedGitPath(file.path)
+            setSelectedGitStaged(staged)
+          }}
+        >
+          <FileIcon name={file.path} />
+          <span className={clsx("truncate", active ? "text-ink" : "text-muted")}>{file.path}</span>
+          <span className="ml-auto shrink-0 rounded border border-line px-1 text-[8.5px] text-faint">
+            {file.untracked ? "?" : file.status}
+          </span>
+        </button>
+        <IconButton
+          className="h-5 w-5 opacity-0 group-hover:opacity-100"
+          title={staged ? t("git.unstage") : t("git.stage")}
+          onClick={() => void moveGit([file.path], !staged)}
+        >
+          {staged ? <Minus size={10} /> : <Plus size={10} />}
+        </IconButton>
+      </div>
+    )
   }
 
   return (
@@ -460,57 +587,190 @@ export function FilePanel({
         </>
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
-          {activeSessionId ? (
-            <>
-              <div className="flex items-center gap-2 border-b border-line px-2.5 py-2 text-[10.5px] text-muted">
-                <span>{t("files.changedFiles", { count: diff.length })}</span>
-                <span className="text-good">+{totals.additions}</span>
-                <span className="text-bad">-{totals.deletions}</span>
-              </div>
-              {diffLoading ? (
-                <div className="flex items-center justify-center py-10 text-faint">
-                  <Spinner />
+          <div className="flex items-center gap-1 border-b border-line px-2 py-1.5">
+            <button
+              data-change-tab="session"
+              className={clsx(
+                "flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                changeMode === "session" ? "bg-raised text-ink" : "text-muted hover:bg-line-soft hover:text-ink",
+              )}
+              onClick={() => switchChangeMode("session")}
+            >
+              {t("git.session")}
+              {diff.length > 0 && <span className="text-[9px] text-faint">{diff.length}</span>}
+            </button>
+            <button
+              data-change-tab="git"
+              className={clsx(
+                "flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                changeMode === "git" ? "bg-raised text-ink" : "text-muted hover:bg-line-soft hover:text-ink",
+              )}
+              onClick={() => switchChangeMode("git")}
+            >
+              <GitBranch size={11} className={changeMode === "git" ? "text-accent" : "text-faint"} />
+              {t("git.title")}
+              {gitInfo?.isRepo && !gitInfo.clean && (
+                <span className="text-[9px] text-faint">{gitInfo.staged.length + gitInfo.unstaged.length}</span>
+              )}
+            </button>
+          </div>
+
+          {changeMode === "session" ? (
+            activeSessionId ? (
+              <>
+                <div className="flex items-center gap-2 border-b border-line px-2.5 py-2 text-[10.5px] text-muted">
+                  <span>{t("files.changedFiles", { count: diff.length })}</span>
+                  <span className="text-good">+{totals.additions}</span>
+                  <span className="text-bad">-{totals.deletions}</span>
                 </div>
-              ) : diff.length === 0 ? (
+                {diffLoading ? (
+                  <div className="flex items-center justify-center py-10 text-faint">
+                    <Spinner />
+                  </div>
+                ) : diff.length === 0 ? (
+                  <div className="px-3 py-8">
+                    <EmptyState title={t("files.noChanges")} description={t("files.noChangesHint")} />
+                  </div>
+                ) : (
+                  <>
+                    <div className="max-h-[36%] min-h-[80px] overflow-y-auto border-b border-line p-1">
+                      {diff.map((file) => (
+                        <button
+                          key={file.file}
+                          data-diff-file={file.file}
+                          className={clsx(
+                            "flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[11px] transition-colors",
+                            selectedDiffPath === file.file
+                              ? "bg-accent-soft/40 text-ink"
+                              : "text-muted hover:bg-line-soft/60 hover:text-ink",
+                          )}
+                          onClick={() => setSelectedDiffPath(file.file)}
+                        >
+                          <FileCode2 size={12} className="shrink-0 text-faint" />
+                          <span className="truncate">{file.file}</span>
+                          <span className="ml-auto shrink-0 text-[9.5px] text-good">+{file.additions}</span>
+                          <span className="shrink-0 text-[9.5px] text-bad">-{file.deletions}</span>
+                        </button>
+                      ))}
+                    </div>
+                    <div className="min-h-0 flex-1 overflow-hidden">
+                      {selectedDiff ? (
+                        <UnifiedDiff before={selectedDiff.before} after={selectedDiff.after} className="h-full" />
+                      ) : (
+                        <div className="px-3 py-8 text-center text-[11px] text-faint">{t("files.selectChange")}</div>
+                      )}
+                    </div>
+                  </>
+                )}
+              </>
+            ) : (
+              <div className="px-3 py-8">
+                <EmptyState title={t("files.noSession")} description={t("files.noChangesHint")} />
+              </div>
+            )
+          ) : !gitInfo || gitLoading ? (
+            <div className="flex items-center justify-center py-10 text-faint">
+              <Spinner />
+            </div>
+          ) : !gitInfo.isRepo ? (
+            <div className="px-3 py-8">
+              <EmptyState title={t("git.notRepo")} description={t("git.notRepoDesc")} />
+            </div>
+          ) : (
+            <>
+              <div className="flex items-center gap-2 border-b border-line px-2.5 py-2 text-[10.5px]">
+                <GitBranch size={12} className="text-accent" />
+                <span className="min-w-0 truncate font-mono text-[11px] text-ink">{gitInfo.branch ?? "HEAD"}</span>
+                {(gitInfo.ahead ?? 0) > 0 && <span className="text-accent">↑{gitInfo.ahead}</span>}
+                {(gitInfo.behind ?? 0) > 0 && <span className="text-warn">↓{gitInfo.behind}</span>}
+                <span className="ml-auto text-faint">
+                  {gitInfo.clean
+                    ? t("git.clean")
+                    : t("git.staged") + " " + gitInfo.staged.length + " · " + t("git.unstaged") + " " + gitInfo.unstaged.length}
+                </span>
+                <IconButton className="h-5 w-5" title={t("common.refresh")} onClick={() => void loadGit()}>
+                  <RefreshCw size={10} />
+                </IconButton>
+              </div>
+
+              {gitInfo.clean ? (
                 <div className="px-3 py-8">
-                  <EmptyState title={t("files.noChanges")} description={t("files.noChangesHint")} />
+                  <EmptyState title={t("git.clean")} description={t("git.cleanDesc")} />
                 </div>
               ) : (
                 <>
-                  <div className="max-h-[36%] min-h-[80px] overflow-y-auto border-b border-line p-1">
-                    {diff.map((file) => (
-                      <button
-                        key={file.file}
-                        data-diff-file={file.file}
-                        className={clsx(
-                          "flex w-full items-center gap-1.5 rounded px-2 py-1 text-left text-[11px] transition-colors",
-                          selectedDiffPath === file.file
-                            ? "bg-accent-soft/40 text-ink"
-                            : "text-muted hover:bg-line-soft/60 hover:text-ink",
-                        )}
-                        onClick={() => setSelectedDiffPath(file.file)}
-                      >
-                        <FileCode2 size={12} className="shrink-0 text-faint" />
-                        <span className="truncate">{file.file}</span>
-                        <span className="ml-auto shrink-0 text-[9.5px] text-good">+{file.additions}</span>
-                        <span className="shrink-0 text-[9.5px] text-bad">-{file.deletions}</span>
-                      </button>
-                    ))}
-                  </div>
-                  <div className="min-h-0 flex-1 overflow-hidden">
-                    {selectedDiff ? (
-                      <UnifiedDiff before={selectedDiff.before} after={selectedDiff.after} className="h-full" />
-                    ) : (
-                      <div className="px-3 py-8 text-center text-[11px] text-faint">{t("files.selectChange")}</div>
+                  <div className="max-h-[30%] min-h-[84px] overflow-y-auto border-b border-line py-0.5">
+                    {gitInfo.staged.length > 0 && (
+                      <>
+                        <div className="flex items-center gap-2 px-2 pb-0.5 pt-1.5 text-[9px] font-semibold uppercase tracking-wider text-faint">
+                          <span>
+                            {t("git.staged")} · {gitInfo.staged.length}
+                          </span>
+                          <button
+                            className="ml-auto font-medium normal-case tracking-normal text-accent hover:underline"
+                            onClick={() => void moveGit(gitInfo.staged.map((file) => file.path), false)}
+                          >
+                            {t("git.unstageAll")}
+                          </button>
+                        </div>
+                        {gitInfo.staged.map((file) => gitFileRow(file, true))}
+                      </>
+                    )}
+                    {gitInfo.unstaged.length > 0 && (
+                      <>
+                        <div className="flex items-center gap-2 px-2 pb-0.5 pt-1.5 text-[9px] font-semibold uppercase tracking-wider text-faint">
+                          <span>
+                            {t("git.unstaged")} · {gitInfo.unstaged.length}
+                          </span>
+                          <button
+                            className="ml-auto font-medium normal-case tracking-normal text-accent hover:underline"
+                            onClick={() => void moveGit(gitInfo.unstaged.map((file) => file.path), true)}
+                          >
+                            {t("git.stageAll")}
+                          </button>
+                        </div>
+                        {gitInfo.unstaged.map((file) => gitFileRow(file, false))}
+                      </>
                     )}
                   </div>
+
+                  <div className="min-h-0 flex-1 overflow-hidden">
+                    {selectedGitPath ? (
+                      gitDiffLoading ? (
+                        <div className="flex items-center justify-center py-10 text-faint">
+                          <Spinner />
+                        </div>
+                      ) : gitDiff ? (
+                        <UnifiedDiff before={gitDiff.before} after={gitDiff.after} className="h-full" />
+                      ) : (
+                        <div className="px-3 py-8 text-center text-[11px] text-faint">{t("git.diffUnavailable")}</div>
+                      )
+                    ) : (
+                      <div className="px-3 py-8 text-center text-[11px] text-faint">{t("git.noDiff")}</div>
+                    )}
+                  </div>
+
+                  {gitInfo.staged.length > 0 && (
+                    <div className="border-t border-line p-2">
+                      <textarea
+                        className="input min-h-[54px] resize-none text-[11.5px]"
+                        placeholder={t("git.commitPlaceholder")}
+                        value={commitMessage}
+                        onChange={(event) => setCommitMessage(event.target.value)}
+                      />
+                      <Button
+                        variant="primary"
+                        className="mt-1.5 h-7 w-full px-2 text-[11px]"
+                        disabled={!commitMessage.trim() || committing}
+                        onClick={() => void commitChanges()}
+                      >
+                        {committing ? <Spinner size={11} /> : <GitCommit size={11} />} {t("git.commit")}
+                      </Button>
+                    </div>
+                  )}
                 </>
               )}
             </>
-          ) : (
-            <div className="px-3 py-8">
-              <EmptyState title={t("files.noSession")} description={t("files.noChangesHint")} />
-            </div>
           )}
         </div>
       )}

@@ -13,6 +13,9 @@ import type {
   FileContentInfo,
   FileDiff,
   FileNodeInfo,
+  GitDiffContent,
+  GitFileStatus,
+  GitInfo,
   LspConfig,
   LspEntry,
   LspViewData,
@@ -97,6 +100,120 @@ function readGitFileDiff(projectPath: string, file: string): { before: string; a
     if (existsSync(absolute)) after = readFileSync(absolute, "utf8")
   } catch {
     after = ""
+  }
+  const max = 600_000
+  return { before: before.slice(0, max), after: after.slice(0, max) }
+}
+
+function runGit(projectPath: string, args: string[]): string {
+  return execFileSync("git", ["-C", projectPath, ...args], {
+    encoding: "utf8",
+    windowsHide: true,
+    stdio: ["ignore", "pipe", "pipe"],
+    maxBuffer: 8 * 1024 * 1024,
+    timeout: 30_000,
+  })
+}
+
+function gitFailure(error: unknown): string {
+  const record = error as { stderr?: Buffer | string; stdout?: Buffer | string; message?: string }
+  const stderr = record?.stderr ? record.stderr.toString() : ""
+  const stdout = record?.stdout ? record.stdout.toString() : ""
+  return (stderr || stdout || record?.message || "git command failed").trim()
+}
+
+function getGitInfo(): GitInfo {
+  const project = requireProject()
+  try {
+    runGit(project.path, ["rev-parse", "--is-inside-work-tree"])
+  } catch {
+    return { isRepo: false, clean: true, staged: [], unstaged: [] }
+  }
+
+  let root: string | undefined
+  let branch: string | undefined
+  let upstream: string | undefined
+  let ahead: number | undefined
+  let behind: number | undefined
+  try {
+    root = runGit(project.path, ["rev-parse", "--show-toplevel"]).trim()
+  } catch {
+    root = undefined
+  }
+  try {
+    branch = runGit(project.path, ["rev-parse", "--abbrev-ref", "HEAD"]).trim()
+    if (branch === "HEAD") {
+      branch = runGit(project.path, ["rev-parse", "--short", "HEAD"]).trim()
+    }
+  } catch {
+    branch = undefined
+  }
+  try {
+    upstream = runGit(project.path, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).trim()
+    const counts = runGit(project.path, ["rev-list", "--left-right", "--count", "@{u}...HEAD"]).trim().split(/\s+/)
+    behind = Number(counts[0] ?? 0)
+    ahead = Number(counts[1] ?? 0)
+  } catch {
+    upstream = undefined
+  }
+
+  const files: GitFileStatus[] = []
+  const output = runGit(project.path, ["status", "--porcelain=v1", "-uall"])
+  for (const line of output.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    const index = line[0] ?? " "
+    const worktree = line[1] ?? " "
+    let path = line.slice(3).trim()
+    const rename = path.split(" -> ")
+    if (rename.length > 1) path = rename[rename.length - 1]?.trim() ?? path
+    if (!path) continue
+    const untracked = index === "?" && worktree === "?"
+    const staged = !untracked && index !== " " && index !== "?"
+    const unstaged = untracked || (worktree !== " " && worktree !== "?")
+    const status = untracked ? "?" : index !== " " && index !== "?" ? index : worktree
+    files.push({ path, index, worktree, staged, unstaged, untracked, status })
+  }
+  files.sort((a, b) => a.path.localeCompare(b.path))
+  return {
+    isRepo: true,
+    root,
+    branch,
+    upstream,
+    ahead,
+    behind,
+    clean: files.length === 0,
+    staged: files.filter((file) => file.staged),
+    unstaged: files.filter((file) => file.unstaged),
+  }
+}
+
+function gitDiffContent(path: string, staged: boolean): GitDiffContent {
+  const project = requireProject()
+  const normalized = path.replace(/\\/g, "/")
+  const show = (ref: string): string => {
+    try {
+      return runGit(project.path, ["show", `${ref}:${normalized}`])
+    } catch {
+      return ""
+    }
+  }
+  let before = ""
+  let after = ""
+  if (staged) {
+    before = show("HEAD")
+    after = show("")
+  } else {
+    before = show("")
+    if (!before) before = show("HEAD")
+    try {
+      const absolute = resolve(project.path, path)
+      if (existsSync(absolute)) {
+        const buffer = readFileSync(absolute)
+        if (!buffer.includes(0)) after = buffer.toString("utf8")
+      }
+    } catch {
+      after = ""
+    }
   }
   const max = 600_000
   return { before: before.slice(0, max), after: after.slice(0, max) }
@@ -706,6 +823,56 @@ export const handlers: Record<RpcName, Handler> = {
   "file.find": async (query: string) => {
     return call<string[]>(clientFor().find.files({ query: { query } }))
   },
+
+  "git.info": () => getGitInfo(),
+
+  "git.stage": async (paths: string[]) => {
+    const project = requireProject()
+    const normalized = paths.filter(Boolean).map((path) => path.replace(/\\/g, "/"))
+    if (normalized.length > 0) {
+      try {
+        runGit(project.path, ["add", "--", ...normalized])
+      } catch (error) {
+        throw new Error(gitFailure(error))
+      }
+    }
+    return getGitInfo()
+  },
+
+  "git.unstage": async (paths: string[]) => {
+    const project = requireProject()
+    const normalized = paths.filter(Boolean).map((path) => path.replace(/\\/g, "/"))
+    if (normalized.length > 0) {
+      try {
+        runGit(project.path, ["restore", "--staged", "--", ...normalized])
+      } catch {
+        try {
+          runGit(project.path, ["reset", "-q", "HEAD", "--", ...normalized])
+        } catch {
+          try {
+            runGit(project.path, ["rm", "--cached", "-r", "--", ...normalized])
+          } catch (error) {
+            throw new Error(gitFailure(error))
+          }
+        }
+      }
+    }
+    return getGitInfo()
+  },
+
+  "git.commit": async (message: string) => {
+    const project = requireProject()
+    const trimmed = message.trim()
+    if (!trimmed) throw new Error("Commit message is required")
+    try {
+      const output = runGit(project.path, ["commit", "-m", trimmed])
+      return { ok: true, info: getGitInfo(), output }
+    } catch (error) {
+      throw new Error(gitFailure(error))
+    }
+  },
+
+  "git.diff": (path: string, staged: boolean) => gitDiffContent(path, staged),
 
   "config.read": (scope: ConfigScope) => readRawConfig(scope),
 
