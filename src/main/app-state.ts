@@ -13,6 +13,7 @@ export function buildAppState(): AppState {
     appVersion: app.getVersion(),
     platform: process.platform,
     locale: app.getLocale(),
+    userDataDir: app.getPath("userData"),
     projects: getProjects(),
     activeProjectId: project?.id ?? null,
     activeProject: project,

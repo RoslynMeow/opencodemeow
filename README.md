@@ -361,6 +361,15 @@ Windows 下通常是：
 
 说明：
 
+- 设置修改后会立即写入 `studio-state.json`；如果重启后语言/主题恢复默认，通常说明该文件被删除或被其他实例覆盖。
+- Settings → About 会显示当前数据目录，并可直接打开。
+- 开发或自动化测试时建议设置 `STUDIO_USER_DATA` 到临时目录，避免覆盖真实用户设置：
+
+```powershell
+$env:STUDIO_USER_DATA = "$env:TEMP\meowstudio-test-profile"
+npm run dev
+```
+
 - 从旧名称 `opencode-studio` 升级时，首次启动会自动迁移 runtime、profiles 和项目状态到新目录。
 - 删除 `studio-state.json` 可以重置项目列表、窗口和外观选择，不影响已下载的 runtime。
 - 会话与消息由 opencode 持久化，切换项目再回来仍会恢复。
@@ -387,6 +396,7 @@ Windows 下通常是：
 $env:STUDIO_SMOKE = "1"
 $env:STUDIO_SMOKE_PROJECT = "E:\path\to\project"
 $env:STUDIO_RUNTIME_BIN = "E:\path\to\opencode.exe"   # 可选，跳过下载
+$env:STUDIO_USER_DATA = "$env:TEMP\meowstudio-test-profile"  # 可选，隔离测试设置
 npm start
 ```
 

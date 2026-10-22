@@ -468,6 +468,8 @@ const en: Record<string, string> = {
   "settings.pid": "PID {pid}",
   "settings.unavailable": "not installed",
   "settings.noProject": "No project",
+  "settings.dataDir": "Data directory",
+  "settings.openDataDir": "Open data directory",
   "settings.configShort": "config",
   "settings.pluginsShort": "plugins",
 
@@ -1034,6 +1036,8 @@ const zh: Record<string, string> = {
   "settings.pid": "PID {pid}",
   "settings.unavailable": "未安装",
   "settings.noProject": "无项目",
+  "settings.dataDir": "数据目录",
+  "settings.openDataDir": "打开数据目录",
   "settings.configShort": "配置",
   "settings.pluginsShort": "插件",
 

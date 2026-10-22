@@ -91,6 +91,7 @@ export interface AppState {
   appVersion: string
   platform: string
   locale: string
+  userDataDir: string
   projects: Project[]
   activeProjectId: string | null
   activeProject: Project | null

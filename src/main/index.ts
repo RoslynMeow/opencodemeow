@@ -14,6 +14,12 @@ import { ensureBackend } from "./backend-manager"
 import { addProject, getActiveProject, setActiveProject, updateSettings } from "./store"
 import { projectConfigFile } from "./paths"
 
+const customUserData = process.env.STUDIO_USER_DATA
+if (customUserData) {
+  mkdirSync(customUserData, { recursive: true })
+  app.setPath("userData", customUserData)
+}
+
 const baseDir = fileURLToPath(new URL(".", import.meta.url))
 let mainWindow: BrowserWindow | null = null
 

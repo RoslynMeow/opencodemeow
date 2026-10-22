@@ -422,12 +422,26 @@ export function SettingsView() {
           <div className="mt-2 grid gap-2 text-[11.5px] text-muted md:grid-cols-2">
             <div>
               OpenCode MeowStudio <span className="text-ink">{state.appVersion}</span> | Electron{" "}
-              <span className="font-mono">{window.studio.versions.electron}</span> 璺?Chrome{" "}
+              <span className="font-mono">{window.studio.versions.electron}</span> | Chrome{" "}
               <span className="font-mono">{window.studio.versions.chrome}</span>
             </div>
             <div>
-              opencode SDK <span className="font-mono">@opencode-ai/sdk 1.19.3</span> 璺?backend{" "}
+              opencode SDK <span className="font-mono">@opencode-ai/sdk 1.19.3</span> | backend{" "}
               <span className="font-mono">{backend.version ?? runtime.version ?? "-"}</span>
+            </div>
+          </div>
+          <div className="mt-3 rounded-lg border border-line bg-canvas px-3 py-2">
+            <div className="text-[10px] font-semibold uppercase tracking-wider text-faint">{t("settings.dataDir")}</div>
+            <div className="mt-0.5 truncate font-mono text-[10.5px] text-muted" title={state.userDataDir}>
+              {state.userDataDir}
+            </div>
+            <div className="mt-1.5">
+              <Button
+                className="h-6 px-2 text-[10.5px]"
+                onClick={() => void rpc("app.openPath", state.userDataDir).catch((error) => addToast("error", formatError(error)))}
+              >
+                <ExternalLink size={10} /> {t("settings.openDataDir")}
+              </Button>
             </div>
           </div>
           <div className="mt-2 flex gap-2">
