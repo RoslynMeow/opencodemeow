@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process"
 import { createHash } from "node:crypto"
-import { chmodSync, createWriteStream, existsSync, mkdirSync, rmSync, statSync } from "node:fs"
+import { chmodSync, createWriteStream, existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Readable, Transform } from "node:stream"
@@ -59,6 +59,31 @@ function verifyBinary(binary: string): string {
   }
   const match = output.match(/\d+\.\d+\.\d+(?:[-+][\w.-]+)?/)
   return match?.[0] ?? output.split(/\s+/).pop() ?? "unknown"
+}
+
+function verificationMarker(version: string): string {
+  return join(runtimeRoot(version), ".meow-verified")
+}
+
+function binaryFingerprint(binary: string): string {
+  const info = statSync(binary)
+  return `${info.size}:${Math.round(info.mtimeMs)}`
+}
+
+function isVerifiedCache(version: string, binary: string): boolean {
+  try {
+    return readFileSync(verificationMarker(version), "utf8").trim() === binaryFingerprint(binary)
+  } catch {
+    return false
+  }
+}
+
+function markVerified(version: string, binary: string): void {
+  try {
+    writeFileSync(verificationMarker(version), binaryFingerprint(binary), "utf8")
+  } catch {
+    // The marker is an optimization; failure is not fatal.
+  }
 }
 
 function findSystemBinary(): string | null {
@@ -154,6 +179,7 @@ async function downloadRuntime(version: string): Promise<RuntimeStatus> {
     chmodSync(binary, 0o755)
   }
   const actualVersion = verifyBinary(binary)
+  markVerified(version, binary)
   log("runtime", `runtime ready at ${binary} (${actualVersion})`)
   return update({ state: "ready", version: actualVersion, binaryPath: binary, source: "downloaded", error: undefined })
 }
@@ -173,12 +199,19 @@ async function runEnsure(version: string, autoDownload: boolean, force: boolean)
 
   const target = runtimeBinary(version)
   if (!force && existsSync(target)) {
+    log("runtime", `cache hit ${target}`)
+    if (isVerifiedCache(version, target)) {
+      return update({ state: "ready", version, binaryPath: target, source: "cache", error: undefined })
+    }
     try {
       const actual = verifyBinary(target)
-      return update({ state: "ready", version: actual, binaryPath: target, source: "downloaded", error: undefined })
+      markVerified(version, target)
+      return update({ state: "ready", version: actual, binaryPath: target, source: "cache", error: undefined })
     } catch (error) {
       log("runtime", `cached runtime invalid, re-downloading: ${(error as Error).message}`)
     }
+  } else if (!existsSync(target)) {
+    log("runtime", `cache miss for ${version} at ${target}`)
   }
 
   if (autoDownload) {

@@ -78,36 +78,40 @@ function ToolCard({ part }: { part: ToolPart }) {
       )}
     >
       <button
-        className="flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors hover:bg-line-soft/50"
+        className="w-full px-3 py-2 text-left transition-colors hover:bg-line-soft/50"
         onClick={() => hasDetails && setExpanded((value) => !value)}
       >
-        <span
-          className={clsx(
-            "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border",
-            state.status === "error"
-              ? "border-bad/30 bg-bad/10 text-bad"
-              : state.status === "completed"
-                ? "border-good/25 bg-good/10 text-good"
-                : "border-line bg-raised text-accent",
+        <div className="flex items-center gap-2.5">
+          <span
+            className={clsx(
+              "flex h-6 w-6 shrink-0 items-center justify-center rounded-md border",
+              state.status === "error"
+                ? "border-bad/30 bg-bad/10 text-bad"
+                : state.status === "completed"
+                  ? "border-good/25 bg-good/10 text-good"
+                  : "border-line bg-raised text-accent",
+            )}
+          >
+            {state.status === "pending" || state.status === "running" ? (
+              <Spinner size={12} />
+            ) : state.status === "completed" ? (
+              <Check size={12} />
+            ) : (
+              <X size={12} />
+            )}
+          </span>
+          <Icon size={13} className="shrink-0 text-faint" />
+          <span className="min-w-0 flex-1 truncate font-mono text-[11.5px] font-medium text-ink">{title}</span>
+          {state.status === "completed" && state.time.end && (
+            <span className="shrink-0 text-[10px] text-faint">{Math.max(0, state.time.end - state.time.start)}ms</span>
           )}
-        >
-          {state.status === "pending" || state.status === "running" ? (
-            <Spinner size={12} />
-          ) : state.status === "completed" ? (
-            <Check size={12} />
-          ) : (
-            <X size={12} />
+          {hasDetails && (
+            <ChevronRight size={13} className={clsx("shrink-0 text-faint transition-transform", expanded && "rotate-90")} />
           )}
-        </span>
-        <Icon size={13} className="shrink-0 text-faint" />
-        <span className="shrink-0 font-mono text-[11.5px] font-medium text-ink">{title}</span>
-        <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-faint">{toolSummary(part)}</span>
-        {state.status === "completed" && state.time.end && (
-          <span className="shrink-0 text-[10px] text-faint">{Math.max(0, state.time.end - state.time.start)}ms</span>
-        )}
-        {hasDetails && (
-          <ChevronRight size={13} className={clsx("shrink-0 text-faint transition-transform", expanded && "rotate-90")} />
-        )}
+        </div>
+        <div className="mt-1 line-clamp-2 break-words pl-9 pr-1 font-mono text-[10.5px] leading-relaxed text-faint [overflow-wrap:anywhere]">
+          {toolSummary(part)}
+        </div>
       </button>
       {expanded && (
         <div className="space-y-2 border-t border-line px-3 py-2.5">

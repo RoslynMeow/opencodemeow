@@ -19,6 +19,7 @@ import { AgentPicker, ModelPicker } from "./ModelPicker"
 import { MessageItem, OptimisticUserMessage } from "./Message"
 import { Button, IconButton, Spinner, StatusDot } from "./ui"
 import { useT } from "../i18n/useT"
+import { sessionTitle } from "../lib/session-title"
 import { buildSessionTree, countDescendants, sessionRootId } from "../lib/session-tree"
 import { TaskTree } from "./TaskTree"
 import { FilePanel, type FilePanelTab } from "./FilePanel"
@@ -154,8 +155,8 @@ export function ChatView() {
   }
 
   return (
-    <div className="flex h-full min-w-0">
-      <div className="flex min-w-0 flex-1 flex-col">
+    <div className="relative flex h-full min-w-0">
+      <div className={clsx("min-w-0 flex-1 flex-col", panel === "none" ? "flex" : "hidden xl:flex")}>
       <header className="flex h-[54px] shrink-0 items-center gap-2 border-b border-line/80 px-5">
         {session ? (
           <div className="flex min-w-0 items-center gap-2">
@@ -177,11 +178,11 @@ export function ChatView() {
                 onClick={startEditingTitle}
                 title={t("chat.renameSession")}
               >
-                <span className="max-w-[340px] truncate">{session.title || t("chat.newConversation")}</span>
+                <span className="max-w-[340px] truncate">{sessionTitle(session.title, t("chat.newConversation"))}</span>
                 <Pencil size={11} className="text-faint opacity-0 transition-opacity group-hover:opacity-100" />
               </button>
             )}
-            <div className="hidden min-w-0 items-center gap-1.5 text-[10.5px] text-faint lg:flex">
+            <div className="hidden min-w-0 items-center gap-1.5 text-[10.5px] text-faint 2xl:flex">
               <span>·</span>
               <span className="max-w-[320px] truncate" title={state.activeProject.path}>
                 {state.activeProject.path}
@@ -214,7 +215,7 @@ export function ChatView() {
             title={t("files.title")}
           >
             <FolderSearch size={13} />
-            <span className="hidden md:inline">{t("files.title")}</span>
+            <span className="hidden xl:inline">{t("files.title")}</span>
           </Button>
           <Button
             variant="ghost"
@@ -224,7 +225,7 @@ export function ChatView() {
             title={t("tree.title")}
           >
             <Network size={13} />
-            <span className="hidden md:inline">{t("tree.title")}</span>
+            <span className="hidden xl:inline">{t("tree.title")}</span>
             {childCount > 0 && (
               <span className="rounded-full bg-accent-soft/60 px-1.5 text-[9px] font-semibold text-accent">{childCount}</span>
             )}
@@ -236,7 +237,7 @@ export function ChatView() {
             disabled={!session}
             title={t("chat.sessionChanges")}
           >
-            <GitBranch size={13} /> {t("chat.sessionChanges")}
+            <GitBranch size={13} /> <span className="hidden xl:inline">{t("chat.sessionChanges")}</span>
           </Button>
           <IconButton onClick={() => void newSession()} title={t("chat.newChat")} disabled={!running}>
             <Plus size={15} />

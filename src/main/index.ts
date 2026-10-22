@@ -18,27 +18,38 @@ const customUserData = process.env.STUDIO_USER_DATA
 if (customUserData) {
   mkdirSync(customUserData, { recursive: true })
   app.setPath("userData", customUserData)
+} else {
+  const stableUserData = join(app.getPath("appData"), "opencode-meowstudio")
+  if (app.getPath("userData").toLowerCase() !== stableUserData.toLowerCase()) {
+    app.setPath("userData", stableUserData)
+  }
 }
 
 const baseDir = fileURLToPath(new URL(".", import.meta.url))
 let mainWindow: BrowserWindow | null = null
 
 function migrateLegacyUserData(): void {
+  if (customUserData) return
   const current = app.getPath("userData")
-  const legacy = join(app.getPath("appData"), "opencode-studio")
-  if (current === legacy || !existsSync(legacy)) return
-  mkdirSync(current, { recursive: true })
-  for (const name of ["runtime", "profiles"]) {
-    const source = join(legacy, name)
-    const target = join(current, name)
-    if (existsSync(source) && !existsSync(target)) {
-      cpSync(source, target, { recursive: true })
+  const legacyDirs = [
+    join(app.getPath("appData"), "opencode-studio"),
+    join(app.getPath("appData"), "OpenCode Meow Studio"),
+  ]
+  for (const legacy of legacyDirs) {
+    if (legacy.toLowerCase() === current.toLowerCase() || !existsSync(legacy)) continue
+    mkdirSync(current, { recursive: true })
+    for (const name of ["runtime", "profiles", "Local Storage"]) {
+      const source = join(legacy, name)
+      const target = join(current, name)
+      if (existsSync(source) && !existsSync(target)) {
+        cpSync(source, target, { recursive: true })
+      }
     }
-  }
-  const legacyState = join(legacy, "studio-state.json")
-  const currentState = join(current, "studio-state.json")
-  if (existsSync(legacyState) && !existsSync(currentState)) {
-    copyFileSync(legacyState, currentState)
+    const legacyState = join(legacy, "studio-state.json")
+    const currentState = join(current, "studio-state.json")
+    if (existsSync(legacyState) && !existsSync(currentState)) {
+      copyFileSync(legacyState, currentState)
+    }
   }
 }
 
@@ -376,6 +387,28 @@ async function captureScreenshot(): Promise<void> {
   const initial = await mainWindow.webContents.capturePage()
   writeFileSync(`${target}-initial.png`, initial.toPNG())
 
+  const demoMenu = process.env.STUDIO_DEMO_MENU
+  if (demoMenu === "model" || demoMenu === "agent") {
+    try {
+      await mainWindow.webContents.executeJavaScript(
+        `(() => { localStorage.setItem("meowstudio:view", "chat"); localStorage.setItem("meowstudio:panel", "none"); location.reload(); return true })()`,
+      )
+      await new Promise((resolve) => setTimeout(resolve, 4500))
+      await mainWindow.webContents.executeJavaScript(
+        `(() => { const node = document.querySelector("[data-${demoMenu}-picker]"); if (node) { node.click(); return true } return false })()`,
+      )
+      await new Promise((resolve) => setTimeout(resolve, 700))
+      const image = await mainWindow.webContents.capturePage()
+      writeFileSync(`${target}-${demoMenu}-menu.png`, image.toPNG())
+      log("app", `${demoMenu} menu screenshot written`)
+    } catch (error) {
+      log("app", `${demoMenu} menu demo failed: ${(error as Error).message}`)
+    }
+    stopBackendImmediate()
+    app.exit(0)
+    return
+  }
+
   if (process.env.STUDIO_DEMO_GIT === "1") {
     try {
       await ensureBackend(false)
@@ -435,6 +468,7 @@ async function captureScreenshot(): Promise<void> {
             localStorage.setItem("meowstudio:view", "chat");
             localStorage.setItem("meowstudio:panel", "files");
             localStorage.setItem("meowstudio:fileTab", "changes");
+            localStorage.setItem("meowstudio:changeTab", "git");
             localStorage.setItem("meowstudio:lastSession:${state.activeProjectId}", ${JSON.stringify(diffSession.id)});
             location.reload();
             return true
@@ -461,6 +495,46 @@ async function captureScreenshot(): Promise<void> {
       }
     } catch (error) {
       log("app", `changes demo failed: ${(error as Error).message}`)
+    }
+    stopBackendImmediate()
+    app.exit(0)
+    return
+  }
+
+  if (process.env.STUDIO_DEMO_GRAPH === "1") {
+    try {
+      await ensureBackend(false)
+      const state = buildAppState()
+      if (state.activeProjectId) {
+        await mainWindow.webContents.executeJavaScript(
+          `(() => {
+            localStorage.setItem("meowstudio:view", "chat");
+            localStorage.setItem("meowstudio:panel", "files");
+            localStorage.setItem("meowstudio:fileTab", "changes");
+            localStorage.setItem("meowstudio:changeTab", "graph");
+            location.reload();
+            return true
+          })()`,
+        )
+        await new Promise((resolve) => setTimeout(resolve, 6500))
+        const image = await mainWindow.webContents.capturePage()
+        writeFileSync(`${target}-graph.png`, image.toPNG())
+        const clicked = await mainWindow.webContents.executeJavaScript(
+          `(() => {
+            const node = document.querySelector("main [data-commit-row]");
+            if (node) { node.click(); return true }
+            return false
+          })()`,
+        )
+        if (clicked) {
+          await new Promise((resolve) => setTimeout(resolve, 900))
+          const detail = await mainWindow.webContents.capturePage()
+          writeFileSync(`${target}-graph-detail.png`, detail.toPNG())
+        }
+        log("app", "screenshot graph written")
+      }
+    } catch (error) {
+      log("app", `graph demo failed: ${(error as Error).message}`)
     }
     stopBackendImmediate()
     app.exit(0)

@@ -327,7 +327,17 @@ export function SettingsView() {
                 {t("settings.binary")}: {runtime.binaryPath ?? t("settings.unavailable")}
               </div>
               <div>
-                {t("settings.source")}: {runtime.source ?? "-"}  |  {t("settings.reportedVersion")}: {runtime.version ?? "-"}
+                {t("settings.source")}:{" "}
+                {runtime.source === "cache"
+                  ? t("settings.sourceCache")
+                  : runtime.source === "downloaded"
+                    ? t("settings.sourceDownloaded")
+                    : runtime.source === "system"
+                      ? t("settings.sourceSystem")
+                      : runtime.source === "override"
+                        ? t("settings.sourceOverride")
+                        : "-"}{" "}
+                | {t("settings.reportedVersion")}: {runtime.version ?? "-"}
               </div>
               {runtime.error && <div className="text-bad">{runtime.error}</div>}
             </div>

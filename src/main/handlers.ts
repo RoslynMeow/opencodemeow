@@ -1,6 +1,5 @@
 import type { OpencodeClient } from "@opencode-ai/sdk"
 import { app, dialog, shell } from "electron"
-import { execFileSync } from "node:child_process"
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs"
 import { resolve } from "node:path"
 import type {
@@ -73,6 +72,22 @@ import {
   updateSettings,
 } from "./store"
 import { configPaths, globalPluginsDir, projectPluginsDir } from "./paths"
+import {
+  detectGit,
+  gitBranches,
+  gitCheckout,
+  gitCommitDetail,
+  gitCreateBranch,
+  gitFailure,
+  gitFetch,
+  gitGraph,
+  gitInit,
+  gitPull,
+  gitPush,
+  gitRemotes,
+  installGit,
+  runGitSync,
+} from "./git-service"
 import { ensureRuntime, listRuntimeVersions } from "./runtime"
 import { getClient, reloadInstance, setActiveDirectory, stopBackend } from "./sidecar"
 
@@ -87,10 +102,7 @@ function readGitFileDiff(projectPath: string, file: string): { before: string; a
   const normalized = file.replace(/\\/g, "/")
   let before = ""
   try {
-    before = execFileSync("git", ["-C", projectPath, "show", `HEAD:${normalized}`], {
-      encoding: "utf8",
-      maxBuffer: 4 * 1024 * 1024,
-    })
+    before = runGitSync(projectPath, ["show", `HEAD:${normalized}`])
   } catch {
     before = ""
   }
@@ -106,28 +118,32 @@ function readGitFileDiff(projectPath: string, file: string): { before: string; a
 }
 
 function runGit(projectPath: string, args: string[]): string {
-  return execFileSync("git", ["-C", projectPath, ...args], {
-    encoding: "utf8",
-    windowsHide: true,
-    stdio: ["ignore", "pipe", "pipe"],
-    maxBuffer: 8 * 1024 * 1024,
-    timeout: 30_000,
-  })
-}
-
-function gitFailure(error: unknown): string {
-  const record = error as { stderr?: Buffer | string; stdout?: Buffer | string; message?: string }
-  const stderr = record?.stderr ? record.stderr.toString() : ""
-  const stdout = record?.stdout ? record.stdout.toString() : ""
-  return (stderr || stdout || record?.message || "git command failed").trim()
+  return runGitSync(projectPath, args)
 }
 
 function getGitInfo(): GitInfo {
   const project = requireProject()
+  const environment = detectGit()
+  if (!environment.available) {
+    return {
+      isRepo: false,
+      clean: true,
+      staged: [],
+      unstaged: [],
+      gitAvailable: false,
+    }
+  }
   try {
     runGit(project.path, ["rev-parse", "--is-inside-work-tree"])
   } catch {
-    return { isRepo: false, clean: true, staged: [], unstaged: [] }
+    return {
+      isRepo: false,
+      clean: true,
+      staged: [],
+      unstaged: [],
+      gitAvailable: true,
+      gitVersion: environment.version,
+    }
   }
 
   let root: string | undefined
@@ -174,6 +190,8 @@ function getGitInfo(): GitInfo {
     files.push({ path, index, worktree, staged, unstaged, untracked, status })
   }
   files.sort((a, b) => a.path.localeCompare(b.path))
+  const remotes = gitRemotes(project.path)
+  const remote = remotes.find((entry) => entry.name === "origin") ?? remotes[0]
   return {
     isRepo: true,
     root,
@@ -184,6 +202,10 @@ function getGitInfo(): GitInfo {
     clean: files.length === 0,
     staged: files.filter((file) => file.staged),
     unstaged: files.filter((file) => file.unstaged),
+    gitAvailable: true,
+    gitVersion: environment.version,
+    remoteUrl: remote?.url,
+    githubUrl: remote?.github?.url,
   }
 }
 
@@ -490,6 +512,16 @@ async function ollamaDetect(input?: string): Promise<OllamaInfo> {
     return { reachable: true, baseUrl, version, models }
   } catch (error) {
     return { reachable: false, baseUrl, models: [], error: (error as Error).message }
+  }
+}
+
+async function runGitOperation(operation: (path: string) => string | Promise<string>) {
+  const project = requireProject()
+  try {
+    const output = await operation(project.path)
+    return { ok: true, output, info: getGitInfo() }
+  } catch (error) {
+    throw new Error(gitFailure(error))
   }
 }
 
@@ -825,6 +857,42 @@ export const handlers: Record<RpcName, Handler> = {
   },
 
   "git.info": () => getGitInfo(),
+
+  "git.environment": () => detectGit(true),
+
+  "git.install": () => installGit(),
+
+  "git.init": async () => runGitOperation((path) => gitInit(path)),
+
+  "git.graph": (limit?: number) => {
+    const project = requireProject()
+    return gitGraph(project.path, limit)
+  },
+
+  "git.commitDetail": (hash: string) => {
+    const project = requireProject()
+    return gitCommitDetail(project.path, hash)
+  },
+
+  "git.branches": () => {
+    const project = requireProject()
+    return gitBranches(project.path)
+  },
+
+  "git.remotes": () => {
+    const project = requireProject()
+    return gitRemotes(project.path)
+  },
+
+  "git.fetch": () => runGitOperation((path) => gitFetch(path)),
+
+  "git.pull": () => runGitOperation((path) => gitPull(path)),
+
+  "git.push": () => runGitOperation((path) => gitPush(path)),
+
+  "git.checkout": (branch: string) => runGitOperation((path) => gitCheckout(path, branch)),
+
+  "git.createBranch": (name: string) => runGitOperation((path) => gitCreateBranch(path, name)),
 
   "git.stage": async (paths: string[]) => {
     const project = requireProject()

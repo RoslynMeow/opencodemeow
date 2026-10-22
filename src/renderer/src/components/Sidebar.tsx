@@ -23,6 +23,7 @@ import { useStudio, type ViewName } from "../store/useStore"
 import { IconButton, Spinner, StatusDot } from "./ui"
 import { useT } from "../i18n/useT"
 import { sessionRootId } from "../lib/session-tree"
+import { sessionTitle } from "../lib/session-title"
 
 const TOOLS: Array<{ view: ViewName; labelKey: string; icon: typeof Cpu }> = [
   { view: "models", labelKey: "models.title", icon: Cpu },
@@ -289,7 +290,7 @@ export function Sidebar() {
                           )}
                         />
                       )}
-                      <span className="truncate text-[12px]">{session.title || t("chat.newConversation")}</span>
+                      <span className="truncate text-[12px]">{sessionTitle(session.title, t("chat.newConversation"))}</span>
                     </div>
                     <div className="mt-0.5 pl-3 text-[9.5px] text-faint">{relativeTime(session.time.updated)}</div>
                   </button>

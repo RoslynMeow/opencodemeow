@@ -63,7 +63,7 @@ export interface RuntimeStatus {
   state: RuntimeState
   version?: string
   binaryPath?: string
-  source?: "downloaded" | "system" | "override"
+  source?: "downloaded" | "cache" | "system" | "override"
   received?: number
   total?: number
   error?: string
@@ -170,12 +170,104 @@ export interface GitInfo {
   clean: boolean
   staged: GitFileStatus[]
   unstaged: GitFileStatus[]
+  gitAvailable?: boolean
+  gitVersion?: string
+  remoteUrl?: string
+  githubUrl?: string
 }
 
 export interface GitDiffContent {
   before: string
   after: string
 }
+
+export interface GitEnvironment {
+  available: boolean
+  version?: string
+  path?: string
+  platform: string
+  canAutoInstall: boolean
+}
+
+export interface GitInstallResult {
+  ok: boolean
+  output: string
+  environment: GitEnvironment
+  manualUrl?: string
+}
+
+export interface GitRef {
+  name: string
+  kind: "head" | "local" | "remote" | "tag"
+}
+
+export interface GitCommit {
+  hash: string
+  shortHash: string
+  parents: string[]
+  author: string
+  authorEmail: string
+  timestamp: number
+  subject: string
+  refs: GitRef[]
+}
+
+export interface GitGraphData {
+  commits: GitCommit[]
+  head: string | null
+  branch: string | null
+  remoteNames: string[]
+  truncated: boolean
+}
+
+export interface GitCommitFile {
+  path: string
+  status: string
+  additions: number
+  deletions: number
+}
+
+export interface GitCommitDetail {
+  commit: GitCommit
+  body: string
+  committer: string
+  committerEmail: string
+  commitTimestamp: number
+  files: GitCommitFile[]
+  insertions: number
+  deletions: number
+}
+
+export interface GitBranch {
+  name: string
+  current: boolean
+  upstream?: string
+  remote?: boolean
+}
+
+export interface GitBranches {
+  local: GitBranch[]
+  remotes: GitBranch[]
+  current: string | null
+}
+
+export interface GitRemote {
+  name: string
+  url: string
+  defaultBranch?: string
+  github?: {
+    owner: string
+    repo: string
+    url: string
+  }
+}
+
+export interface GitOperationResult {
+  ok: boolean
+  output: string
+  info: GitInfo
+}
+
 
 export interface FileContentInfo {
   path: string
@@ -462,6 +554,18 @@ export interface RpcMap {
   "file.read": { args: [path: string]; result: FileContentInfo }
   "file.find": { args: [query: string]; result: string[] }
   "git.info": { args: []; result: GitInfo }
+  "git.environment": { args: []; result: GitEnvironment }
+  "git.install": { args: []; result: GitInstallResult }
+  "git.init": { args: []; result: GitOperationResult }
+  "git.graph": { args: [limit?: number]; result: GitGraphData }
+  "git.commitDetail": { args: [hash: string]; result: GitCommitDetail }
+  "git.branches": { args: []; result: GitBranches }
+  "git.remotes": { args: []; result: GitRemote[] }
+  "git.fetch": { args: []; result: GitOperationResult }
+  "git.pull": { args: []; result: GitOperationResult }
+  "git.push": { args: []; result: GitOperationResult }
+  "git.checkout": { args: [branch: string]; result: GitOperationResult }
+  "git.createBranch": { args: [name: string]; result: GitOperationResult }
   "git.stage": { args: [paths: string[]]; result: GitInfo }
   "git.unstage": { args: [paths: string[]]; result: GitInfo }
   "git.commit": { args: [message: string]; result: { ok: boolean; info: GitInfo; output: string } }

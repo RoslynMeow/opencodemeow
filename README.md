@@ -4,6 +4,14 @@
 
 它没有重新实现模型层，而是把官方 `opencode serve` 作为本地 sidecar 后端，通过官方 `@opencode-ai/sdk` 通信。因此 **models.dev 上的 200+ provider、OpenAI 兼容端点、本地 Ollama、MCP、LSP、插件、会话存储、权限系统** 都直接复用 opencode 的能力。
 
+## 项目状态
+
+- 版本 `0.1.0`，开发分支 `dev`，已产出 Windows x64 NSIS 安装包并通过 GitHub Actions 构建。
+- 已经可以日常使用：多项目会话、流式对话、文件浏览、任务树、MCP/LSP/插件市场、主题与中英文界面。
+- Git 已覆盖本地提交、提交图、fetch/pull/push、分支切换/新建、GitHub 链接与系统凭据认证。
+- 仍是 MVP：暂未实现冲突解决 UI、stash、内嵌 GitHub 账号/PR 列表、自动更新、应用图标与签名。
+- 当前重点是把 Git/GitHub 工作流做完整，同时保持与 opencode 的能力同步。
+
 ---
 
 ## 功能
@@ -16,9 +24,9 @@
 - 权限请求弹窗（once / always / reject）
 - 中断生成、会话 diff、token / cost 统计
 - **文件面板**：项目文件树、文件名搜索、只读预览、会话变更与统一 diff
-- **Git 集成**：分支/远程状态、暂存/取消暂存、提交、staged/working tree diff
-- 模型选择器：provider + model 搜索
-- Agent 选择器（build / plan / 自定义 primary agent）
+- **Git 集成**：提交图（分支/合并/引用）、暂存/取消暂存、staged/working tree diff、本地提交、fetch/pull/push、分支切换/新建、GitHub 打开/创建 PR、检测并引导安装 Git
+- 模型选择器：provider + model 搜索，弹层自动避让窗口边缘
+- Agent 选择器：build / plan / 自定义 primary agent，与模型选择器统一主题
 - 自动记住每个项目上次使用的模型与 agent
 - 自动恢复上次项目、会话、主题、语言、窗口位置与大小
 - **多代理任务树**：总控会话 → 子代理层级、实时状态、agent/模型、耗时、tokens 与费用
@@ -75,16 +83,32 @@ diff 内容优先使用 opencode 返回的 before/after。如果当前版本的 
 
 ### Git 集成
 
-**Changes** 面板内提供 `Session` 和 `Git` 两个子视图：
+**Changes** 面板内提供 `Session`、`Git`、`Graph` 三个子视图。
 
-- Git 子视图显示当前分支、领先/落后远程的提交数、staged / unstaged / untracked 文件
-- 可以逐个或批量暂存 / 取消暂存
+**Git**
+
+- 显示当前分支、领先/落后远程的提交数、staged / unstaged / untracked 文件
+- 逐个或批量暂存 / 取消暂存
 - 点击文件查看 staged 或 working tree 的 diff
-- 输入提交信息并直接提交（只做本地 commit）
-- 刷新按钮会重新读取 `git status`
-- 非 Git 项目会显示初始化提示，不影响 Session 变更视图
+- 输入提交信息并直接提交（本地 commit）
+- Fetch / Pull / Push；推送时会自动为当前分支设置 upstream
+- 分支菜单：切换本地分支、新建分支
+- GitHub 仓库可一键打开，或跳转到 GitHub 的 compare 页面创建 Pull Request
+- 认证交给系统 **Git Credential Manager**，应用不读取、不保存 Git/GitHub token
+- 未安装 Git 时显示安装入口：Windows 优先通过 winget 安装 Git for Windows，失败或没有 winget 时打开官方下载页
+- 非 Git 项目可以一键 `git init`，不需要离开应用
 
-当前实现只做本地操作，不包含 push / pull、分支切换、stash、冲突解决 UI，也不会读取或保存远端凭据。
+**Graph**
+
+- 使用 `git log --all --date-order` 展示最近 300 条提交（包含所有本地/远程分支与 tag）
+- 自动计算 lane，绘制普通提交、分支、merge 的双亲连线、HEAD 与引用 badge
+- 悬停提交显示 hash、作者、时间、父提交、引用与 merge 提示
+- 点击提交查看完整提交信息、作者/提交者、文件变更与增删统计
+- 详情中的父提交可点击跳转；点击行会高亮并滚动到对应提交
+- 支持拖动平移、滚轮浏览；窄窗口下 Graph 会独占内容区，避免挤压聊天
+- 提交图随 fetch / pull / push / 分支切换 / 新 commit 刷新
+
+当前还没有 merge/rebase/stash/cherry-pick 的交互式冲突解决 UI；GitHub 登录与 PR 列表也还没有内嵌，创建 PR 会打开浏览器。
 
 ### Provider
 
@@ -151,6 +175,7 @@ diff 内容优先使用 opencode 返回的 before/after。如果当前版本的 
 │  handlers.ts   RPC 路由 + SDK 调用                            │
 │  sidecar.ts    spawn opencode serve / Basic Auth / SSE       │
 │  runtime.ts    从 npm 自动下载对应平台 opencode 二进制         │
+│  git-service.ts Git 图 / 提交 / 分支 / 远程操作               │
 │  config-service.ts  JSONC 读写与结构化 patch                  │
 │  store.ts      项目列表、设置、profile                        │
 └──────────────────────────┬───────────────────────────────────┘
@@ -168,6 +193,7 @@ diff 内容优先使用 opencode 返回的 before/after。如果当前版本的 
 - **事件订阅**：主进程为当前激活项目订阅 `/event` SSE，然后通过 `studio:event` 转发给渲染层；切换项目时自动重新订阅。
 - **配置变更**：MCP / LSP / provider 修改后 dispose 当前实例；插件修改后完整重启后端。
 - **Profile 隔离**：隔离模式通过 `XDG_CONFIG_HOME` / `XDG_DATA_HOME` / `XDG_CACHE_HOME` 把配置、auth、数据全部限制在应用目录内。
+- **Git 与 Graph 分离**：Git 操作直接调用本机 `git` CLI（不经过 opencode SDK）；主进程返回提交/分支/远程数据，渲染层计算 lane 和绘制提交图。
 
 ---
 
@@ -195,6 +221,14 @@ Windows 下通常是：
 ```text
 %APPDATA%\opencode-meowstudio\runtime\opencode\1.19.3\bin\opencode.exe
 ```
+
+**不会每次启动都下载。** 后续启动会优先复用缓存；只有在以下情况才会重新下载：
+
+- 切换了 runtime 版本
+- 缓存目录被删除或二进制损坏
+- 首次在新机器 / 新数据目录上运行
+
+成功校验后会写入 `.meow-verified` 指纹标记，之后启动不再反复执行大文件校验。Settings → Runtime 的 `Source` 会显示 `Cached` / `Downloaded` / `System`，可以据此确认当前实际使用的来源。自动下载可以在 Settings 中关闭；关闭后需要本机已有 `opencode` CLI，或通过 `STUDIO_RUNTIME_BIN` 指定二进制。
 
 如果 Electron 自身下载失败（`Electron failed to install correctly`），可以切换镜像：
 
@@ -275,7 +309,8 @@ src/
     index.ts            # app 启动、窗口、IPC、smoke/screenshot 调试模式
     handlers.ts         # 所有 RPC 实现
     sidecar.ts          # opencode serve 生命周期 + SSE 订阅
-    runtime.ts          # 二进制自动下载、校验、系统兜底
+    runtime.ts          # 二进制自动下载、缓存校验、系统兜底
+    git-service.ts      # Git 提交图、提交详情、分支/远程操作、Git 安装
     config-service.ts   # JSONC 读取 / patch / 插件扫描
     store.ts            # 项目列表与设置持久化
     paths.ts            # 全局/项目路径、profile 环境变量
@@ -289,10 +324,10 @@ src/
     index.html
     src/
       App.tsx
-      components/       # Chat、Sidebar、Message、ModelPicker、权限弹窗、UI
+      components/       # Chat、Sidebar、Message、ModelPicker、GitGraph、GitSetup、UI
       views/            # Projects / Models / MCP / LSP / Plugins / Settings
       i18n/             # 中英文词典、Locale 解析、useT
-      lib/              # rpc、格式化、配置表单、MCP/LSP 市场目录
+      lib/              # rpc、格式化、配置表单、Git 图布局、MCP/LSP 市场目录
       store/useStore.ts # Zustand + SSE 事件 reducer
       styles.css        # Tailwind v4 主题与 markdown 样式
 ```
@@ -362,6 +397,7 @@ Windows 下通常是：
 说明：
 
 - 设置修改后会立即写入 `studio-state.json`；如果重启后语言/主题恢复默认，通常说明该文件被删除或被其他实例覆盖。
+- `userData` 固定为 `%APPDATA%\opencode-meowstudio`（macOS/Linux 对应应用数据目录），开发版、预览版和安装版共用同一份项目与 runtime 缓存。
 - Settings → About 会显示当前数据目录，并可直接打开。
 - 开发或自动化测试时建议设置 `STUDIO_USER_DATA` 到临时目录，避免覆盖真实用户设置：
 
@@ -370,7 +406,8 @@ $env:STUDIO_USER_DATA = "$env:TEMP\meowstudio-test-profile"
 npm run dev
 ```
 
-- 从旧名称 `opencode-studio` 升级时，首次启动会自动迁移 runtime、profiles 和项目状态到新目录。
+- 从旧名称 `opencode-studio` 或 `OpenCode Meow Studio` 升级时，首次启动会自动迁移 runtime、profiles、Local Storage 和项目状态到新目录。
+- runtime 首次下载成功后会在版本目录写入 `.meow-verified` 指纹；后续启动优先复用缓存，不会重复下载。
 - 删除 `studio-state.json` 可以重置项目列表、窗口和外观选择，不影响已下载的 runtime。
 - 会话与消息由 opencode 持久化，切换项目再回来仍会恢复。
 - 选中模型/agent 后立即写入，不需要点击保存。
@@ -413,6 +450,20 @@ $env:STUDIO_DEMO_LIVE = "1"
 npm start
 ```
 
+```powershell
+# Git 提交图截图（含合并提交详情）
+$env:STUDIO_SCREENSHOT = "$env:TEMP\studio-graph"
+$env:STUDIO_DEMO_GRAPH = "1"
+npm start
+```
+
+```powershell
+# 打开模型 / Agent 下拉框并截图
+$env:STUDIO_SCREENSHOT = "$env:TEMP\studio-menu"
+$env:STUDIO_DEMO_MENU = "model"   # 或 "agent"
+npm start
+```
+
 完整 smoke 还会验证会话创建、MCP 保存/删除、LSP 开关、Ollama provider 写入、插件创建/禁用、profile 隔离切换。
 
 ---
@@ -423,7 +474,9 @@ npm start
 
 - 内置终端 / PTY、内嵌可编辑代码编辑器（当前文件预览为只读）
 - 并排 diff 视图（当前为统一 diff；非 Git 项目的 diff 内容可能不可用）
-- Git push / pull、分支切换、stash / 冲突解决 UI
+- Git 交互式 merge / rebase / cherry-pick、stash、tag 管理和冲突解决 UI
+- 内嵌 GitHub OAuth/PAT 登录、PR 列表/评审、Issue 操作（目前认证走系统 Git 凭据，PR 通过浏览器创建）
+- Git Graph 分页 / 无限滚动（当前读取最近 300 条提交）
 - 图片 / 文件附件上传
 - 多窗口、多 session 并行展示
 - 自动更新（electron-updater）

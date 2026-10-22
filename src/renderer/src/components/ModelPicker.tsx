@@ -1,9 +1,50 @@
 import clsx from "clsx"
-import { Check, ChevronDown, Search, Settings } from "lucide-react"
-import { useEffect, useMemo, useRef, useState } from "react"
+import { Bot, Check, ChevronDown, Search, Settings } from "lucide-react"
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react"
+import { createPortal } from "react-dom"
 import { useStudio } from "../store/useStore"
 import { useT } from "../i18n/useT"
 import { StatusDot } from "./ui"
+
+function usePopoverPosition(
+  anchorRef: RefObject<HTMLElement | null>,
+  open: boolean,
+  direction: "up" | "down",
+  width: number,
+): CSSProperties {
+  const [style, setStyle] = useState<CSSProperties>({})
+  useEffect(() => {
+    if (!open) return
+    let frame = 0
+    let last = ""
+    const place = () => {
+      const rect = anchorRef.current?.getBoundingClientRect()
+      if (!rect) return
+      const nextWidth = Math.min(width, window.innerWidth - 16)
+      const left = Math.min(Math.max(8, rect.left), window.innerWidth - nextWidth - 8)
+      const next: CSSProperties =
+        direction === "up"
+          ? { position: "fixed", left, width: nextWidth, bottom: window.innerHeight - rect.top + 8 }
+          : { position: "fixed", left, width: nextWidth, top: rect.bottom + 8 }
+      const key = JSON.stringify(next)
+      if (key !== last) {
+        last = key
+        setStyle(next)
+      }
+    }
+    const tick = () => {
+      place()
+      frame = requestAnimationFrame(tick)
+    }
+    tick()
+    window.addEventListener("resize", place)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener("resize", place)
+    }
+  }, [anchorRef, direction, open, width])
+  return style
+}
 
 export function ModelPicker({
   onManage,
@@ -22,11 +63,14 @@ export function ModelPicker({
   const [open, setOpen] = useState(false)
   const [query, setQuery] = useState("")
   const ref = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuStyle = usePopoverPosition(buttonRef, open, direction, 360)
 
   useEffect(() => {
     if (!open) return
     const handler = (event: MouseEvent) => {
-      if (!ref.current?.contains(event.target as Node)) setOpen(false)
+      if (!ref.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setOpen(false)
     }
     document.addEventListener("mousedown", handler)
     return () => document.removeEventListener("mousedown", handler)
@@ -57,6 +101,8 @@ export function ModelPicker({
   return (
     <div className="relative" ref={ref}>
       <button
+        ref={buttonRef}
+        data-model-picker
         className={clsx(
           "flex items-center gap-2 rounded-lg border border-line bg-surface transition-colors hover:border-faint",
           compact ? "max-w-[220px] px-2 py-1 text-[11.5px]" : "max-w-[280px] px-2.5 py-1.5 text-[12px]",
@@ -70,13 +116,16 @@ export function ModelPicker({
         <ChevronDown size={12} className={clsx("shrink-0 text-faint transition-transform", open && "rotate-180")} />
       </button>
 
-      {open && (
-        <div
-          className={clsx(
-            "animate-fade-up absolute right-0 z-40 w-[360px] overflow-hidden rounded-xl border border-line bg-surface shadow-2xl",
-            direction === "up" ? "bottom-full mb-2" : "top-full mt-2",
-          )}
-        >
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            data-popover="model"
+            className={clsx(
+              "animate-fade-up z-[60] overflow-hidden rounded-xl border border-line bg-surface shadow-2xl",
+            )}
+            style={menuStyle}
+          >
           <div className="flex items-center gap-2 border-b border-line px-3 py-2">
             <Search size={14} className="text-faint" />
             <input
@@ -138,34 +187,90 @@ export function ModelPicker({
               {t("models.manage")}
             </button>
           )}
-        </div>
-      )}
+          </div>,
+          document.body,
+        )}
     </div>
   )
 }
 
 export function AgentPicker({ compact = false }: { compact?: boolean }) {
+  const { t } = useT()
   const agents = useStudio((state) => state.agents)
   const projectId = useStudio((state) => state.state?.activeProjectId ?? null)
   const selected = useStudio((state) => (projectId ? state.selectedAgents[projectId] : undefined))
   const setAgent = useStudio((state) => state.setAgent)
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  const menuStyle = usePopoverPosition(buttonRef, open, "up", 220)
   const primary = agents.filter((agent) => agent.mode !== "subagent")
   const current = selected ?? primary.find((agent) => agent.name === "build")?.name ?? primary[0]?.name ?? ""
+
+  useEffect(() => {
+    if (!open) return
+    const handler = (event: MouseEvent) => {
+      if (!ref.current?.contains(event.target as Node) && !menuRef.current?.contains(event.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [open])
+
   return (
-    <select
-      value={current}
-      onChange={(event) => setAgent(event.target.value)}
-      className={clsx(
-        "rounded-lg border border-line bg-surface text-muted outline-none hover:border-faint",
-        compact ? "h-[26px] max-w-[120px] px-1.5 text-[11px]" : "h-[30px] max-w-[150px] px-2 text-[12px]",
-      )}
-      title="Agent"
-    >
-      {primary.map((agent) => (
-        <option key={agent.name} value={agent.name}>
-          {agent.name}
-        </option>
-      ))}
-    </select>
+    <div className="relative" ref={ref}>
+      <button
+        ref={buttonRef}
+        type="button"
+        data-agent-picker
+        className={clsx(
+          "flex items-center gap-1.5 rounded-lg border border-line bg-surface text-muted transition-colors hover:border-faint",
+          compact ? "h-[26px] max-w-[140px] px-2 text-[11px]" : "h-[30px] max-w-[160px] px-2.5 text-[12px]",
+          open && "border-accent/60",
+        )}
+        onClick={() => setOpen((value) => !value)}
+        title={t("tree.agent")}
+      >
+        <Bot size={11} className="shrink-0 text-faint" />
+        <span className="min-w-0 truncate">{current}</span>
+        <ChevronDown size={11} className={clsx("shrink-0 text-faint transition-transform", open && "rotate-180")} />
+      </button>
+
+      {open &&
+        createPortal(
+          <div
+            ref={menuRef}
+            data-popover="agent"
+            className="animate-fade-up z-[60] overflow-hidden rounded-lg border border-line bg-surface p-1 shadow-2xl"
+            style={menuStyle}
+          >
+          <div className="px-2 py-1 text-[9px] font-semibold uppercase tracking-wider text-faint">{t("tree.agent")}</div>
+          <div className="max-h-[260px] overflow-y-auto">
+            {primary.length === 0 && <div className="px-2 py-3 text-center text-[11px] text-faint">{t("models.noAgents")}</div>}
+            {primary.map((agent) => {
+              const active = agent.name === current
+              return (
+                <button
+                  key={agent.name}
+                  type="button"
+                  className={clsx(
+                    "flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-[11.5px] transition-colors hover:bg-line-soft",
+                    active ? "text-ink" : "text-muted",
+                  )}
+                  onClick={() => {
+                    setAgent(agent.name)
+                    setOpen(false)
+                  }}
+                >
+                  <span className="w-3 shrink-0">{active && <Check size={11} className="text-accent" />}</span>
+                  <span className="min-w-0 flex-1 truncate">{agent.name}</span>
+                </button>
+              )
+            })}
+          </div>
+          </div>,
+          document.body,
+        )}
+    </div>
   )
 }

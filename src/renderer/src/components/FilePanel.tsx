@@ -13,6 +13,7 @@ import {
   FolderSearch,
   GitBranch,
   GitCommit,
+  GitFork,
   Image,
   Minus,
   Plus,
@@ -21,9 +22,11 @@ import {
   X,
 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
-import type { FileContentInfo, FileDiff, FileNodeInfo, GitDiffContent, GitFileStatus, GitInfo } from "@shared/types"
+import type { FileContentInfo, FileDiff, FileNodeInfo, GitDiffContent, GitEnvironment, GitFileStatus, GitInfo } from "@shared/types"
 import { Button, EmptyState, IconButton, Spinner } from "./ui"
 import { UnifiedDiff } from "./UnifiedDiff"
+import { GitGraph } from "./GitGraph"
+import { GitSetup } from "./GitSetup"
 import { rpc } from "../lib/rpc"
 import { useStudio } from "../store/useStore"
 import { useT } from "../i18n/useT"
@@ -98,10 +101,13 @@ export function FilePanel({
   const [diff, setDiff] = useState<FileDiff[]>([])
   const [diffLoading, setDiffLoading] = useState(false)
   const [selectedDiffPath, setSelectedDiffPath] = useState<string | null>(null)
-  const [changeMode, setChangeMode] = useState<"session" | "git">(() =>
-    localStorage.getItem("meowstudio:changeTab") === "git" ? "git" : "session",
-  )
+  const [changeMode, setChangeMode] = useState<"session" | "git" | "graph">(() => {
+    const saved = localStorage.getItem("meowstudio:changeTab")
+    return saved === "git" || saved === "graph" ? saved : "session"
+  })
   const [gitInfo, setGitInfo] = useState<GitInfo | null>(null)
+  const [gitEnvironment, setGitEnvironment] = useState<GitEnvironment | null>(null)
+  const [graphRefreshKey, setGraphRefreshKey] = useState(0)
   const [gitLoading, setGitLoading] = useState(false)
   const [selectedGitPath, setSelectedGitPath] = useState<string | null>(null)
   const [selectedGitStaged, setSelectedGitStaged] = useState(false)
@@ -192,7 +198,7 @@ export function FilePanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, activeSessionId, state?.backend.state])
 
-  const switchChangeMode = (mode: "session" | "git") => {
+  const switchChangeMode = (mode: "session" | "git" | "graph") => {
     setChangeMode(mode)
     localStorage.setItem("meowstudio:changeTab", mode)
   }
@@ -201,8 +207,9 @@ export function FilePanel({
     if (state?.backend.state !== "running") return
     setGitLoading(true)
     try {
-      const info = await rpc("git.info")
+      const [info, environment] = await Promise.all([rpc("git.info"), rpc("git.environment")])
       setGitInfo(info)
+      setGitEnvironment(environment)
       if (info.isRepo) {
         const all = [...info.staged, ...info.unstaged]
         const current = selectedGitPath ? all.find((file) => file.path === selectedGitPath) : undefined
@@ -352,6 +359,8 @@ export function FilePanel({
       setChildren({})
       setExpanded(new Set(["."]))
       void loadDir(".")
+    } else if (changeMode === "graph") {
+      setGraphRefreshKey((value) => value + 1)
     } else if (changeMode === "git") {
       void loadGit()
     } else {
@@ -393,7 +402,7 @@ export function FilePanel({
   }
 
   return (
-    <aside className="flex h-full w-[420px] shrink-0 flex-col border-l border-line bg-surface/85">
+    <aside className="flex h-full min-w-0 flex-1 flex-col border-l border-line bg-surface/85 xl:w-[420px] xl:flex-none">
       <div className="flex items-center gap-1 border-b border-line px-1.5 py-1.5">
         <button
           data-file-tab="explorer"
@@ -613,9 +622,22 @@ export function FilePanel({
                 <span className="text-[9px] text-faint">{gitInfo.staged.length + gitInfo.unstaged.length}</span>
               )}
             </button>
+            <button
+              data-change-tab="graph"
+              className={clsx(
+                "flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-medium transition-colors",
+                changeMode === "graph" ? "bg-raised text-ink" : "text-muted hover:bg-line-soft hover:text-ink",
+              )}
+              onClick={() => switchChangeMode("graph")}
+            >
+              <GitFork size={11} className={changeMode === "graph" ? "text-accent" : "text-faint"} />
+              {t("git.graph")}
+            </button>
           </div>
 
-          {changeMode === "session" ? (
+          {changeMode === "graph" ? (
+            <GitGraph refreshKey={graphRefreshKey} />
+          ) : changeMode === "session" ? (
             activeSessionId ? (
               <>
                 <div className="flex items-center gap-2 border-b border-line px-2.5 py-2 text-[10.5px] text-muted">
@@ -672,9 +694,9 @@ export function FilePanel({
             <div className="flex items-center justify-center py-10 text-faint">
               <Spinner />
             </div>
-          ) : !gitInfo.isRepo ? (
-            <div className="px-3 py-8">
-              <EmptyState title={t("git.notRepo")} description={t("git.notRepoDesc")} />
+          ) : !gitEnvironment || !gitEnvironment.available || !gitInfo.isRepo ? (
+            <div className="h-full overflow-y-auto">
+              <GitSetup environment={gitEnvironment} isRepo={Boolean(gitInfo.isRepo)} onReady={loadGit} />
             </div>
           ) : (
             <>

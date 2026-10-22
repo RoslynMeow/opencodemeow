@@ -6,6 +6,7 @@ import { useStudio } from "../store/useStore"
 import { useT } from "../i18n/useT"
 import { formatDate } from "../lib/config-utils"
 import { rpc } from "../lib/rpc"
+import { sessionTitle } from "../lib/session-title"
 import { buildSessionTree, collectSessionIds, countDescendants, sessionRootId, type SessionTreeNode } from "../lib/session-tree"
 import { Badge, Button, IconButton, Modal, Spinner, StatusDot } from "./ui"
 
@@ -116,7 +117,7 @@ export function TaskTree({ onClose }: { onClose: () => void }) {
             <span className="min-w-0 flex-1">
               <span className="flex items-center gap-1.5">
                 <span className={clsx("truncate text-[12px]", isRoot ? "font-semibold" : "font-medium")}>
-                  {node.session.title || t("chat.newConversation")}
+                  {sessionTitle(node.session.title, t("chat.newConversation"))}
                 </span>
                 {isRoot && <Badge className="shrink-0 text-[8.5px]">{t("tree.coordinator")}</Badge>}
               </span>
@@ -148,7 +149,7 @@ export function TaskTree({ onClose }: { onClose: () => void }) {
 
   return (
     <>
-      <aside className="flex h-full w-[320px] shrink-0 flex-col border-l border-line bg-surface/80">
+      <aside className="flex h-full min-w-0 flex-1 flex-col border-l border-line bg-surface/80 xl:w-[320px] xl:flex-none">
         <div className="border-b border-line px-3 pb-2.5 pt-3">
           <div className="flex items-center gap-2">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg border border-accent/25 bg-accent-soft/40 text-accent">
@@ -221,7 +222,7 @@ export function TaskTree({ onClose }: { onClose: () => void }) {
       <Modal
         open={Boolean(selected)}
         onClose={() => setSelected(null)}
-        title={selected ? selected.title || t("chat.newConversation") : t("tree.details")}
+        title={selected ? sessionTitle(selected.title, t("chat.newConversation")) : t("tree.details")}
         width="max-w-xl"
         footer={
           <>
@@ -257,7 +258,7 @@ export function TaskTree({ onClose }: { onClose: () => void }) {
               <div className="text-[11px] text-faint">
                 {t("tree.parent")}:{" "}
                 <span className="font-mono">
-                  {sessions.find((session) => session.id === selected.parentID)?.title ?? selected.parentID}
+                  {sessionTitle(sessions.find((session) => session.id === selected.parentID)?.title, selected.parentID)}
                 </span>
               </div>
             )}
